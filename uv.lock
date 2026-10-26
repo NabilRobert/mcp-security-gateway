@@ -307,12 +307,18 @@ wheels = [
 [[package]]
 name = "mcp-gateway"
 version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
     { name = "mcp" },
     { name = "numpy" },
     { name = "onnxruntime" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "starlette" },
     { name = "tokenizers" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -320,14 +326,21 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = "==4.15.1" },
+    { name = "httpx2", specifier = "==2.16.0" },
     { name = "mcp", specifier = "==2.3.0" },
     { name = "numpy", specifier = "==2.5.4" },
     { name = "onnxruntime", specifier = "==1.31.0" },
+    { name = "pydantic", specifier = "==2.14.1" },
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "starlette", specifier = "==1.10.0" },
     { name = "tokenizers", specifier = "==0.23.3" },
+    { name = "uvicorn", specifier = "==0.54.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -335,6 +348,7 @@ dev = [
     { name = "pyright", specifier = "==1.1.406" },
     { name = "pytest", specifier = "==8.4.2" },
     { name = "ruff", specifier = "==0.14.0" },
+    { name = "types-pyyaml", specifier = "==6.0.12.20250915" },
 ]
 
 [[package]]
@@ -731,6 +745,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", size = 28091, upload-time = "2026-10-12T22:27:31.808Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", size = 19017, upload-time = "2026-10-12T22:27:30.377Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20250915"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/69/3c51b36d04da19b92f9e815be12753125bd8bc247ba0470a982e6979e71c/types_pyyaml-6.0.12.20250915.tar.gz", hash = "sha256:0f8b54a528c303f0e6f7165687dd33fafa81c807fcac23f632b63aa624ced1d3", size = 17522, upload-time = "2025-09-15T03:01:00.728Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/e0/1eed384f02555dde685fff1a1ac805c1c7dcb6dd019c916fe659b1c1f9ec/types_pyyaml-6.0.12.20250915-py3-none-any.whl", hash = "sha256:e7d4d9e064e89a3b3cae120b4990cd370874d2bf12fa5f46c97018dd5d3c9ab6", size = 20338, upload-time = "2025-09-15T03:00:59.218Z" },
 ]
 
 [[package]]
