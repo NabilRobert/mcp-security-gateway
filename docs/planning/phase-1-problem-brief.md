@@ -103,21 +103,24 @@ false-positive cost reported next to it.
 - Not deployed publicly in v1. A public deployment is a separate decision
   for later, with its own security review.
 
-## Decisions (proposed — Arthur to confirm)
+## Decisions (settled 2026-10-26)
 
 1. **Scope of v1:** all four features (auth, per-tool policy, audit log,
    output injection check) plus the measurement. If time runs short,
    injection detection is cut back to rules only; the measurement stays,
    because it's the point.
-2. **Language and base:** Python, on the MCP Python SDK (the same stack as
+2. **Detection:** pattern rules first, then a small open classifier running
+   locally, both at $0. Phase 6 measures which layer actually helps.
+3. **Language and base:** Python, on the MCP Python SDK (the same stack as
    MCP-backbone), as a proxy: a client to the upstream server and a server
    to the agent.
-3. **Transports:** Streamable HTTP to the agent. Upstream servers over
+4. **Transports:** Streamable HTTP to the agent. Upstream servers over
    Streamable HTTP (MCP-backbone) and stdio (the filesystem server).
-4. **Measurement budget:** it needs model calls, and the Sumopod balance is
-   $0. The gateway, its tests and the attack suite can all be built at $0;
-   the with/without runs wait until Arthur tops up and approves a budget.
-5. **Time budget:** to be set by Arthur (Project 2's was 3–4 days).
+5. **Measurement budget:** it needs model calls, and the model budget is $0
+   for now. The gateway, its tests and the attack suite can all be built at
+   $0; the with/without runs wait until Arthur approves a budget.
+6. **Time budget:** as fast as possible. Each remaining phase doc is kept
+   to the minimum that settles its questions.
 
 ## Cost of doing nothing
 
