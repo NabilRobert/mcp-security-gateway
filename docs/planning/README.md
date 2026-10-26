@@ -12,4 +12,4 @@ were written, as a record of what was planned and why.
 | [4. Flows and failures](phase-4-flows-failures.md) | The request flow and what happens when each step fails |
 | [5. Architecture and decisions](phase-5-architecture-decisions.md) | The ADRs: each decision, its alternatives, consequences and sources |
 | [6. Risks and skeleton](phase-6-risks-skeleton.md) | The riskiest assumptions, tested with spikes before building |
-| 7. Slices and plan | The work cut into vertical slices, with a fallback decided in advance |
+| [7. Slices and plan](phase-7-slices-plan.md) | The work cut into vertical slices, with a fallback decided in advance |
