@@ -202,3 +202,46 @@ families were not loaded.
   - scores both raw and Variant B on the same samples, so the comparison
     is like for like.
 
+### Spike 4 rerun (2026-10-26): Variant B keeps the model layer, below target
+
+The same 1,977 benign outputs and 540 dev injections, now planted
+realistically. Raw and Variant B were scored on identical samples.
+
+| Threshold | Raw: FP | Raw: dev recall | B: FP | B: dev recall |
+|---|---|---|---|---|
+| 0.5 | 53.9% | 81.5% | 25.7% | 77.0% |
+| 0.9 | 49.5% | 77.0% | 21.7% | 73.7% |
+| 0.99 | 33.1% | 64.1% | **10.9%** | **65.2%** |
+| 0.999 | 8.3% | 44.1% | 0.9% | 48.1% |
+| 0.9999 | 1.4% | 35.2% | 0.1% | 40.6% |
+
+- **Raw: KILL.** No threshold has FP ≤ 20% with recall ≥ 50%.
+- **Variant B: model layer kept, below target.**
+  - At 0.99 it clears the kill line (10.9% FP, 65.2% recall), but no
+    threshold meets the target (FP ≤ 5% with most injections caught).
+  - At 0.999 it comes closest: 0.9% FP and 48.1% recall.
+- **What B still flags:**
+  - error messages that read like instructions ("Access denied - path
+    outside allowed directories…", "ENOENT: no such file…");
+  - a few schema-description query results.
+- **Weakest dev families at 0.5:** exfiltration 58% and fake-completion
+  58%. Override (93%) and hidden markup (89%) are the strongest.
+- **The fixture's planted note** (5 real outputs): four score ≥ 0.9. The
+  fifth scores 0.003: the note is inside a long multi-file read, so the
+  model misses it even though it's in a scanned window.
+
+**Spike 3 stays a FAIL** (p95 416 ms per window). Most windows are short
+(p50 32 ms); full 512-token windows are slow on this CPU.
+
+**What this changes (ADR-005, to be updated in slice E):**
+- The model layer scores JSON string values only (Variant B).
+- Its threshold is chosen on dev in slice E, between 0.99 and 0.999, for
+  the trade-off stated in the README.
+- Rules carry the families the model is weak on.
+- The fallback to rules only stays open, because the target wasn't met.
+- Latency needs a decision from Arthur (see the flags in the handover):
+  - (a) int8 quantisation, which must be re-validated on dev;
+  - (b) Prompt Guard 2 22M, which is gated and needs his licence
+    acceptance;
+  - (c) accept the latency and cap the windows per output.
+

@@ -55,7 +55,62 @@ class Model:
         return best
 
 
+def string_leaves(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [s for v in value for s in string_leaves(v)]
+    if isinstance(value, dict):
+        return [s for v in value.values() for s in string_leaves(v)]
+    return []
+
+
+def variant_b(text: str) -> str:
+    """Variant B: for JSON, only the string values, one per line."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    return "\n".join(string_leaves(data))
+
+
 def plant(host: str, injection: str, position: str) -> str:
+    """Realistic planting: inside a JSON string value, else as text."""
+    try:
+        data = json.loads(host)
+    except ValueError:
+        return plant_text(host, injection, position)
+    slots: list[tuple[object, object]] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(v, str):
+                    slots.append((node, k))
+                else:
+                    walk(v)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                if isinstance(v, str):
+                    slots.append((node, i))
+                else:
+                    walk(v)
+
+    walk(data)
+    if slots:
+        container, key = slots[{"start": 0, "middle": len(slots) // 2, "end": -1}[position]]
+        container[key] = f"{container[key]} {injection}"  # type: ignore[index]
+    else:
+        target = data if isinstance(data, dict) else None
+        if target is None and isinstance(data, list) and data and isinstance(data[0], dict):
+            target = data[0]
+        if target is None:
+            return plant_text(host, injection, position)
+        target["note"] = injection
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def plant_text(host: str, injection: str, position: str) -> str:
     if position == "start":
         return f"{injection}\n{host}"
     if position == "end":
@@ -90,15 +145,18 @@ def main() -> int:
     print(f"[spike 3] per window on {len(ms)} windows: p50 {statistics.median(ms):.1f} ms, p95 {pct(ms, 0.95):.1f} ms")
     spike3 = pct(ms, 0.95) < 100 and model.load_seconds < 10
 
-    benign_scores = [(r, model.score(r["text"])) for r in benign]
+    variant = sys.argv[1] if len(sys.argv) > 1 else "raw"
+    prep = variant_b if variant == "b" else (lambda s: s)
+    print(f"[spike 4] variant: {variant}")
+    benign_scores = [(r, model.score(prep(r["text"]))) for r in benign]
     injected = []
     hosts = rng.sample(benign, 30)
     for t in dev_templates:
         for i, host in enumerate(hosts):
             canary = f"CANARY-{t['id']}-{i}"
             text = plant(host["text"], t["text"].replace("{canary}", canary), ["start", "middle", "end"][i % 3])
-            injected.append((t, model.score(text)))
-    natural_scores = [model.score(r["text"]) for r in natural]
+            injected.append((t, model.score(prep(text))))
+    natural_scores = [model.score(prep(r["text"])) for r in natural]
 
     print(f"[spike 4] benign outputs: {len(benign)}; dev injected samples: {len(injected)}")
     best = None
