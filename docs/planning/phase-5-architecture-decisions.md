@@ -182,6 +182,35 @@ A paid LLM judge is ruled out by the $0 budget.
 - If Spike 4 kills the model layer, v1 ships rules only (the Phase 1
   fallback) and says so.
 
+**As built (slice E, 2026-10-27):**
+- **What both layers read:** the text blocks plus the string values of
+  `structured_content`; a JSON output is reduced to its string values
+  (Spike 4, Variant B).
+- **Rules:** 21 patterns, written from the dev template families only.
+  Matching is case-insensitive, on NFKC-normalised text with whitespace
+  collapsed.
+- **Model:** ProtectAI v2 as ONNX, 512-token windows with an overlap of
+  64, at most 16 windows (more is flagged), and a 2 s timeout that gives up
+  on time (`abandon_on_cancel`) and fails closed.
+- **Layering:** layers run in order and stop at the first flag.
+- **Threshold 0.999**, by the rule fixed before scoring: the lowest of 0.99,
+  0.995 and 0.999 with dev false positives ≤ 5%. Dev results, with
+  timeouts counted as blocks, as the gateway treats them:
+
+  | Threshold | Model: FP | Model: recall | Rules + model: FP | Rules + model: recall |
+  |---|---|---|---|---|
+  | 0.99 | 14.5% | 61.1% | 14.8% | 100% |
+  | 0.995 | 11.1% | 55.8% | 11.5% | 100% |
+  | 0.999 | 2.2% | 49.7% | 2.8% | 100% |
+
+  - Rules alone on dev: 0% false positives, 100% recall. That is overfitted
+    by construction; the test split is the real measure.
+  - 12–21 scans per run timed out, mostly large outputs. Each one is a
+    block, so latency (Spike 3) costs false positives, not just time.
+- **Change from Phase 4:** an output larger than the scan cap is treated
+  as unscanned and blocked unless `allow_unscanned_content` is set, instead
+  of being cut and passed on. It is simpler, and it fails closed.
+
 ### ADR-006: Default action is `block`
 **Options:**
 - `block`: replace the output with a notice;

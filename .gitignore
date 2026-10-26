@@ -4,5 +4,6 @@
 .venv/
 HANDOVER*.md
 __pycache__/
+logs/
 models/
 mutants/
