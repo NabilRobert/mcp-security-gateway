@@ -1,0 +1,15 @@
+[project]
+name = "mcp-gateway"
+version = "0.0.0"
+description = "A small, measured security gateway for MCP servers"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mcp==2.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==8.4.2",
+    "ruff==0.14.0",
+    "pyright==1.1.406",
+]

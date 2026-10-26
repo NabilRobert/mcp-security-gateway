@@ -92,3 +92,36 @@ evaluation and the measurement.
 ## Spike results
 
 *(Filled in as the spikes run.)*
+
+### Spike 1 result: PASS — the proxy is transparent at the same protocol version (2026-10-26)
+
+`spikes/s1_transparency.py`: a low-level `Server` route per upstream,
+forwarding through an SDK client session, behind a bare ASGI Bearer check.
+It was run against the local MCP-backbone (repro stack) and the pinned
+filesystem server, replaying 60 distinct recorded tool calls per upstream
+from the harness's runs. No model calls.
+
+- **Auth:** a wrong key → HTTP 401, and no handler ran.
+- **Identity:** the handler read the caller set by the ASGI layer
+  (`ctx.request.state`) on all 180 calls, so ADR-003 works as designed.
+- **MCP-backbone:** tool list identical (4 tools); 60/60 results identical.
+- **Filesystem, agent side in legacy mode** (the same protocol version as
+  the server): tool list identical (14 tools); 60/60 results identical.
+  Both are raw JSON, with nothing stripped.
+- **Filesystem, agent side at 2026-07-28** (Inspect's default), with the
+  server still on 2025-11-25: results identical apart from the
+  per-connection `_meta["io.modelcontextprotocol/serverInfo"]` stamp the
+  SDK adds. The tool lists lose `execution: {"taskSupport": "forbidden"}`:
+  - that field exists only in the 2025-11-25 types (`mcp_types/_v2025_11_25`);
+  - its own docstring says "Absent means 'forbidden'";
+  - so the SDK translated between versions, and the proxy lost nothing.
+
+**What this changes:**
+- "Transparent" is defined as identical JSON at the same protocol version.
+  Across versions, the SDK's own translation is expected, and the
+  transparency test (slice D) checks both.
+- The stamp names the gateway, which is honest: the gateway is the server
+  on that connection.
+- Shutdown printed `ASGI callable returned without completing response`:
+  sessions were still closing after the spike's server stopped. The real
+  `serve` must close sessions before the upstream clients (slice A).

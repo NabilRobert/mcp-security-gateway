@@ -1,5 +1,5 @@
-HANDOVER*.md
 .env
 .env.*
 .venv/
+HANDOVER*.md
 __pycache__/
