@@ -103,10 +103,10 @@ def in_memory(fake: FakeUpstream) -> Callable[[str, HttpUpstream | StdioUpstream
 
 
 @contextlib.asynccontextmanager
-async def running_gateway(config: GatewayConfig, connect: Any) -> AsyncIterator[str]:
+async def running_gateway(config: GatewayConfig, connect: Any, detector: Any = None) -> AsyncIterator[str]:
     port = free_port()
     holder: list[uvicorn.Server] = []
-    task = asyncio.create_task(serve(config, port=port, connect=connect, started=holder.append))
+    task = asyncio.create_task(serve(config, port=port, connect=connect, detector=detector, started=holder.append))
     for _ in range(200):
         if holder and holder[0].started:
             break

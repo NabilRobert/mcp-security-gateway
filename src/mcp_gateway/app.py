@@ -25,8 +25,8 @@ from starlette.requests import HTTPConnection
 from mcp_gateway import __version__
 from mcp_gateway.audit import AuditError, AuditLog, verify_chain
 from mcp_gateway.auth import ApiKeyBackend, KeyRejected, unauthorized_handler
-from mcp_gateway.config import ConfigError, GatewayConfig, HttpUpstream, StdioUpstream
-from mcp_gateway.detect import Detector, StubDetector
+from mcp_gateway.config import ConfigError, DetectorSettings, GatewayConfig, HttpUpstream, StdioUpstream
+from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDetector, StubDetector
 from mcp_gateway.proxy import Route
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
@@ -125,6 +125,28 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
     return app
 
 
+def build_detector(settings: DetectorSettings) -> Detector:
+    """The configured layers, rules first. Failing to load the model is a
+    start-up error: the gateway doesn't run without the detection it was
+    configured with (Phase 4)."""
+    layers: list[Detector] = []
+    if settings.rules:
+        layers.append(RulesDetector())
+    if settings.model is not None:
+        try:
+            layers.append(
+                ModelDetector(
+                    settings.model.dir,
+                    threshold=settings.model.threshold,
+                    max_windows=settings.model.max_windows,
+                    timeout_s=settings.model.timeout_s,
+                )
+            )
+        except Exception as exc:
+            raise ConfigError(f"can't load the detector model from {settings.model.dir}: {exc}") from exc
+    return LayeredDetector(layers) if layers else StubDetector()
+
+
 async def serve(
     config: GatewayConfig,
     *,
@@ -136,7 +158,7 @@ async def serve(
 ) -> None:
     """Run until stopped. Raises ConfigError before serving if anything at
     start-up is wrong."""
-    detector = detector or StubDetector()
+    detector = detector or build_detector(config.detector)
     audit = AuditLog(config.audit.path, fsync=config.audit.fsync)
     try:
         await _serve(config, audit, detector, host=host, port=port, connect=connect, started=started)

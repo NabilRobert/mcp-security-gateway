@@ -73,11 +73,31 @@ class RoutePolicy(_Model):
 
 class Policy(_Model):
     routes: dict[str, RoutePolicy]
+    # What happens to a tool output the detector flags (ADR-006).
+    on_suspicious: Literal["block", "annotate", "log"] = "block"
+    # Content the detector can't read (images, audio, embedded resources,
+    # text beyond the scan cap) is blocked unless this is set.
+    allow_unscanned_content: bool = False
 
 
 class Caller(_Model):
     key_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     policy: str
+
+
+class ModelSettings(_Model):
+    dir: Path
+    threshold: Annotated[float, Field(gt=0, lt=1)]
+    max_windows: Annotated[int, Field(ge=1)] = 16
+    timeout_s: Annotated[float, Field(gt=0)] = 2.0
+
+
+class DetectorSettings(_Model):
+    """Both layers off is the measurement's `gateway-off` configuration."""
+
+    rules: bool = True
+    model: ModelSettings | None = None
+    scan_cap_chars: Annotated[int, Field(ge=1)] = 262_144
 
 
 class AuditSettings(_Model):
@@ -90,6 +110,7 @@ class GatewayConfig(_Model):
     callers: dict[Annotated[str, Field(pattern=NAME)], Caller]
     policies: dict[Annotated[str, Field(pattern=NAME)], Policy]
     audit: AuditSettings
+    detector: DetectorSettings = DetectorSettings()
 
     @model_validator(mode="after")
     def _references(self) -> Self:

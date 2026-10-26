@@ -1,0 +1,56 @@
+# Prompt-injection rules for tool outputs. Written from the DEV template
+# families only (eval/injections/templates.json) and tuned against the dev
+# half of the benign set; the test families were not used. Patterns are
+# matched case-insensitively against NFKC-normalised text with whitespace
+# collapsed. The rules file's hash is part of the detector version.
+rules:
+  # override: "ignore / disregard / forget ... instructions"
+  - id: override-instructions
+    pattern: '\b(ignore|disregard|forget|override)\b[^.\n]{0,40}\b(instructions?|rules|prompts?|guidelines|directions)\b'
+  - id: disregard-the-user
+    pattern: '\b(ignore|disregard)\b (what )?the (user|question|request)\b'
+  - id: new-task
+    pattern: '\b(your )?new (task|instructions?|role|system prompt|policy)\b\s*(is|:|from)'
+  - id: follow-only-these
+    pattern: '\bfollow only the instructions\b'
+  # system-impersonation: role markers and chat-template tokens in data
+  - id: role-marker
+    pattern: '(^|[\s"''>])(system|developer)\s*:\s*(updated|new|you|the assistant|the model|instruction)'
+  - id: chat-template-token
+    pattern: '<\|im_(start|end)\|>|\[/?INST\]|<<SYS>>|<\|(system|assistant|user)\|>'
+  - id: assistant-must
+    pattern: '\bthe (assistant|model|ai) must\b'
+  # exfiltration: asking the model to put secrets or raw data in its answer
+  - id: reveal-secrets
+    # ".env" has no word boundary before its dot, and the gaps allow dots
+    # (file names) but not line breaks.
+    pattern: '\b(reveal|include|append|print|output|paste|report|send)\b[^\n]{0,60}(\b(passwords?|api keys?|secrets?|credentials|private keys?)\b|\.env\b)'
+  - id: dump-into-answer
+    pattern: '\b(append|copy|include)\b[^\n]{0,60}\b(full text|contents? of|all tool results|verbatim)\b[^\n]{0,60}\b(reply|answer|response)\b'
+  # fake-completion: pretending the task ended and a new one began
+  - id: task-complete-new-task
+    pattern: '\b(task|answer|request)\s+(complete|completed|done|received)\b[^\n]{0,30}\b(new|next|follow[- ]up)\b'
+  - id: end-of-document
+    pattern: '-{2,}\s*end of (the )?(document|file|context|data)\s*-{2,}'
+  - id: user-has-asked
+    pattern: '\bthe user has (now |also )?asked you\b'
+  - id: run-a-write-tool
+    pattern: '\b(run|call|use|execute)\b\s*:?\s*(the )?(write_file|edit_file|move_file|create_directory)\b'
+  # hidden-markup: instructions to AI hidden in comments or invisible elements
+  - id: html-comment-to-ai
+    pattern: '<!--[^>]{0,200}\b(ai|assistants?|agents?|models?|llms?)\b'
+  - id: hidden-element
+    pattern: 'display\s*:\s*none[^>]*>[^<]{0,200}\b(assistant|ai|model|ignore)\b'
+  - id: markdown-comment-instruction
+    pattern: '\[//\]:\s*#\s*\([^)]{0,200}\b(instruction|model|assistant|ai)\b'
+  - id: instruction-for-ai
+    pattern: '\b(instructions?|note|message) for (the )?(ai|model|assistants?|agents?|llms?)\b'
+  # non-english-id (Indonesian)
+  - id: id-abaikan-instruksi
+    pattern: '\babaikan\b[^.\n]{0,40}\binstruksi\b'
+  - id: id-untuk-asisten-ai
+    pattern: '\b(untuk|kepada) (asisten|agen) ai\b'
+  - id: id-catatan-sistem
+    pattern: '\bcatatan sistem\b'
+  - id: id-kata-sandi-jawaban
+    pattern: '\bkata sandi\b[^.\n]{0,60}\bjawaban'

@@ -6,16 +6,20 @@ environment variables.
 """
 
 import asyncio
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from mcp_gateway.app import build_detector
 from mcp_gateway.app import serve as serve_gateway
 from mcp_gateway.audit import AuditError
 from mcp_gateway.audit import verify_log as check_log
 from mcp_gateway.auth import new_key
-from mcp_gateway.config import ConfigError, load_config
+from mcp_gateway.config import ConfigError, DetectorSettings, ModelSettings, load_config
+from mcp_gateway.eval.score import load_samples, record_test_score, score
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="A small, measured security gateway for MCP.")
 
@@ -52,6 +56,33 @@ def verify_log(path: Path) -> None:
         typer.echo(f"{len(report.problems)} problem(s) in {report.lines} lines: the log was altered")
         raise typer.Exit(1)
     typer.echo(f"ok: {report.lines} lines, chain intact")
+
+
+@app.command("eval-detector")
+def eval_detector(
+    split: Annotated[str, typer.Option(help="dev to tune; test is scored once per detector version")] = "dev",
+    rules: Annotated[bool, typer.Option(help="use the rules layer")] = True,
+    model_dir: Annotated[Path | None, typer.Option(help="the model's directory; omit for rules only")] = None,
+    threshold: Annotated[float, typer.Option()] = 0.999,
+    max_windows: Annotated[int, typer.Option()] = 16,
+    timeout: Annotated[float, typer.Option(help="seconds per output before failing closed")] = 2.0,
+    root: Annotated[Path, typer.Option(help="the repo root (eval/ lives there)")] = Path(),
+) -> None:
+    """Score the detector on the labelled set, offline (no model calls)."""
+    if split not in ("dev", "test"):
+        raise typer.BadParameter("split must be dev or test")
+    settings = DetectorSettings(
+        rules=rules,
+        model=ModelSettings(dir=model_dir, threshold=threshold, max_windows=max_windows, timeout_s=timeout)
+        if model_dir
+        else None,
+    )
+    detector = build_detector(settings)
+    samples = load_samples(root, "dev" if split == "dev" else "test")
+    result = asyncio.run(score(detector, samples, split))
+    typer.echo(json.dumps(asdict(result), indent=2, ensure_ascii=False))
+    if split == "test":
+        typer.echo(f"recorded: {record_test_score(root, result)}")
 
 
 def main() -> None:
