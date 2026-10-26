@@ -10,6 +10,6 @@ were written, as a record of what was planned and why.
 | [2. Requirements and constraints](phase-2-requirements-constraints.md) | Scenarios, edge cases, must / should / could, constraints |
 | [3. Domain model](phase-3-domain-model.md) | Entities and how they relate |
 | [4. Flows and failures](phase-4-flows-failures.md) | The request flow and what happens when each step fails |
-| 5. Architecture and decisions | The ADRs: each decision, its alternatives, consequences and sources |
-| 6. Risks and skeleton | The riskiest assumptions, tested with spikes before building |
+| [5. Architecture and decisions](phase-5-architecture-decisions.md) | The ADRs: each decision, its alternatives, consequences and sources |
+| [6. Risks and skeleton](phase-6-risks-skeleton.md) | The riskiest assumptions, tested with spikes before building |
 | 7. Slices and plan | The work cut into vertical slices, with a fallback decided in advance |
