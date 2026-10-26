@@ -125,3 +125,34 @@ from the harness's runs. No model calls.
 - Shutdown printed `ASGI callable returned without completing response`:
   sessions were still closing after the spike's server stopped. The real
   `serve` must close sessions before the upstream clients (slice A).
+
+### Spike 5 result: PASS — the benign set builds from recorded runs at $0 (2026-10-26)
+
+`spikes/s5_replay.py` replays every distinct recorded tool call from the
+harness's runs, direct to the local MCP-backbone and the pinned filesystem
+server, and writes the outputs to `eval/benign/outputs.jsonl`
+(1,982 outputs, 1.2 MB). No model calls.
+
+- **1,982 / 1,982 replayed to an output (100%):**
+  - Pagila: 867 calls, 851 ok and 16 error results;
+  - filesystem: 1,115 calls, 716 ok and 399 error results.
+- **The first run found a replay artefact.** 511 filesystem calls failed
+  with "path outside allowed directories", because each recorded trial
+  used its own temporary copy of the fixture and the absolute paths named
+  it. The prefixes are now rebased to the replay's copy, which also merged
+  321 calls that only differed by that prefix.
+- **The remaining error results are genuine:** 1,112 of the 1,115
+  filesystem outputs have the same error status as in the original runs.
+  Most are agents guessing file names that don't exist. They stay in the
+  benign set, because a gateway sees error outputs too.
+- **Size:** median 137 characters, p95 about 2,100, max 17,065. Most
+  outputs fit in one 512-token window, and the largest needs about ten.
+- **The local server's key appears nowhere in the set** (checked by
+  script, without printing it).
+
+**What this changes:**
+- Spike 4 has 1,982 real benign outputs to score.
+- The set is small next to the injected side's needs. The injected half
+  is built from these outputs with planted templates (Phase 4), so it has
+  the same mix of sources.
+
