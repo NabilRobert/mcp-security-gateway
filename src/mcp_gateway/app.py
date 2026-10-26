@@ -8,8 +8,10 @@ clients they forward to (Spike 1).
 
 import contextlib
 import os
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from typing import cast
 
 import httpx2
 import uvicorn
@@ -23,7 +25,7 @@ from starlette.requests import HTTPConnection
 from starlette.routing import Mount
 
 from mcp_gateway import __version__
-from mcp_gateway.audit import AuditLog
+from mcp_gateway.audit import AuditError, AuditLog
 from mcp_gateway.auth import ApiKeyBackend, KeyRejected, unauthorized_handler
 from mcp_gateway.config import ConfigError, GatewayConfig, HttpUpstream, StdioUpstream
 from mcp_gateway.detect import Detector, StubDetector
@@ -66,7 +68,8 @@ async def open_routes(
             client = await stack.enter_async_context(connect(name, upstream))
             tools = {tool.name for tool in await list_all_tools(client)}
         except Exception as exc:
-            raise ConfigError(f"upstream {name!r} is unreachable: {type(exc).__name__}: {exc}") from exc
+            cause = _leaf(exc)
+            raise ConfigError(f"upstream {name!r} is unreachable: {type(cause).__name__}: {cause}") from exc
         for policy_id, policy in config.policies.items():
             route_policy = policy.routes.get(name)
             missing = sorted(set(route_policy.tools) - tools) if route_policy else []
@@ -89,14 +92,19 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
             yield
 
     def on_reject(conn: HTTPConnection, exc: KeyRejected) -> None:
-        audit.append(
-            "call",
-            decision="denied",
-            reason=f"auth: {exc.reason}",
-            key_fingerprint=exc.fingerprint,
-            client=conn.client.host if conn.client else None,
-            path=conn.url.path,
-        )
+        # The request is refused either way, so a log failure here is
+        # reported, not raised (raising would turn the 401 into a 500).
+        try:
+            audit.append(
+                "call",
+                decision="denied",
+                reason=f"auth: {exc.reason}",
+                key_fingerprint=exc.fingerprint,
+                client=conn.client.host if conn.client else None,
+                path=conn.url.path,
+            )
+        except AuditError as error:
+            print(f"mcp-gateway: {error}", file=sys.stderr)
 
     return Starlette(
         routes=[Mount(f"/mcp/{name}", app=app) for name, app in apps.items()],
@@ -125,23 +133,57 @@ async def serve(
     detector = detector or StubDetector()
     audit = AuditLog(config.audit.path, fsync=config.audit.fsync)
     try:
-        async with AsyncExitStack() as stack:
-            routes = await open_routes(stack, config, audit, detector, connect)
-            audit.append(
-                "start",
-                version=__version__,
-                git_sha=os.environ.get("MCP_GATEWAY_GIT_SHA"),
-                policy_sha256=config.policy_hash(),
-                detector=detector.version,
-                routes=sorted(routes),
-            )
-            server = uvicorn.Server(
-                uvicorn.Config(
-                    build_app(config, routes, audit), host=host, port=port, log_level="warning", lifespan="on"
-                )
-            )
-            if started is not None:
-                started(server)
-            await server.serve()
+        await _serve(config, audit, detector, host=host, port=port, connect=connect, started=started)
+    except BaseExceptionGroup as group:
+        # A start-up error raised inside an upstream client's task group comes
+        # out wrapped; surface it as itself so the CLI exits 2 with a message.
+        found = group.subgroup(ConfigError)
+        if found is None:
+            raise
+        raise _first(found) from group
     finally:
         audit.close()
+
+
+def _leaf(exc: BaseException) -> BaseException:
+    """The first real error inside (possibly nested) exception groups."""
+    current: BaseException = exc
+    while isinstance(current, BaseExceptionGroup):
+        nested = cast(BaseExceptionGroup[BaseException], current).exceptions
+        if not nested:
+            break
+        current = nested[0]
+    return cast(BaseException, current)
+
+
+def _first(group: BaseExceptionGroup[ConfigError]) -> ConfigError:
+    inner = group.exceptions[0]
+    return _first(inner) if isinstance(inner, BaseExceptionGroup) else inner
+
+
+async def _serve(
+    config: GatewayConfig,
+    audit: AuditLog,
+    detector: Detector,
+    *,
+    host: str,
+    port: int,
+    connect: Connect,
+    started: Callable[[uvicorn.Server], None] | None,
+) -> None:
+    async with AsyncExitStack() as stack:
+        routes = await open_routes(stack, config, audit, detector, connect)
+        audit.append(
+            "start",
+            version=__version__,
+            git_sha=os.environ.get("MCP_GATEWAY_GIT_SHA"),
+            policy_sha256=config.policy_hash(),
+            detector=detector.version,
+            routes=sorted(routes),
+        )
+        server = uvicorn.Server(
+            uvicorn.Config(build_app(config, routes, audit), host=host, port=port, log_level="warning", lifespan="on")
+        )
+        if started is not None:
+            started(server)
+        await server.serve()
