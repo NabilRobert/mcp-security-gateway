@@ -35,6 +35,7 @@ dev = [
     "pyright==1.1.406",
     "types-pyyaml==6.0.12.20250915",
     "mutmut==3.8.0",
+    "pytest-timeout==2.4.0",
 ]
 
 [tool.ruff]
@@ -53,6 +54,9 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A test that hangs (a task group that never finishes, a missing close) fails
+# instead of stalling the run or CI.
+timeout = 30
 
 [tool.mutmut]
 # Every surviving mutant is a behaviour the tests don't pin down. The CLI is
