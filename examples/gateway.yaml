@@ -15,7 +15,7 @@ upstreams:
 
 callers:
   harness:
-    key_sha256: 0000000000000000000000000000000000000000000000000000000000000000  # replace with hash-key's output
+    key_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # quoted; replace with hash-key's output
     policy: read-only
 
 policies:

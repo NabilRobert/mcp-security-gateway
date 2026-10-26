@@ -70,6 +70,16 @@ def test_mistakes_are_rejected(tmp_path: Path, change: Any, message: str) -> Non
         load_config(write(tmp_path, config))
 
 
+@pytest.mark.parametrize("unquoted", ["1" * 64, "0" + "7" * 63], ids=["decimal", "octal"])
+def test_an_unquoted_hash_is_rejected_with_a_hint(tmp_path: Path, unquoted: str) -> None:
+    path = write(tmp_path, base(tmp_path))
+    text = path.read_text()
+    digest = base(tmp_path)["callers"]["alpha"]["key_sha256"]
+    path.write_text(text.replace(f"key_sha256: {digest}", f"key_sha256: {unquoted}"))
+    with pytest.raises(ConfigError, match="quote key_sha256"):
+        load_config(path)
+
+
 def test_a_missing_upstream_credential_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FAKE_UPSTREAM_KEY", raising=False)
     config = base(tmp_path)

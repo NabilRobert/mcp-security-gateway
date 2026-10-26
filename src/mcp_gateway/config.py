@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 NAME = r"^[a-z0-9][a-z0-9-]{0,62}$"
 
@@ -83,6 +83,15 @@ class Policy(_Model):
 class Caller(_Model):
     key_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     policy: str
+
+    @field_validator("key_sha256", mode="before")
+    @classmethod
+    def _quoted(cls, value: object) -> object:
+        # YAML reads an unquoted all-digit hash as an integer (octal, with a
+        # leading zero); converting it back would give the wrong hash.
+        if not isinstance(value, str):
+            raise ValueError("quote key_sha256 in the YAML: unquoted, a hash can be read as a number")
+        return value
 
 
 class ModelSettings(_Model):
