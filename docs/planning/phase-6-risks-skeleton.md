@@ -156,3 +156,40 @@ server, and writes the outputs to `eval/benign/outputs.jsonl`
   is built from these outputs with planted templates (Phase 4), so it has
   the same mix of sources.
 
+### Spikes 3 and 4, first run (2026-10-26): Spike 3 FAIL, Spike 4 KILL as drafted
+
+`spikes/s34_model.py`, ProtectAI v2 (ONNX, revision `90c9989b1a34`), Apple
+M2 CPU. 1,977 benign outputs; 540 dev injections (6 dev families × 3
+templates × 30 benign hosts, planted at the start, middle or end). The test
+families were not loaded.
+
+- **Spike 3:**
+  - load 1.4 s;
+  - per 512-token window: p50 32 ms, **p95 416 ms** (target < 100 ms);
+  - **FAIL.**
+- **Spike 4** (false positives on benign outputs / dev recall):
+
+  | Threshold | False positives | Dev recall |
+  |---|---|---|
+  | 0.5 | 53.9% | 77.6% |
+  | 0.9 | 49.5% | 72.8% |
+  | 0.99 | 33.1% | 59.3% |
+  | 0.999 | 8.3% | 40.7% |
+  | 0.9999 | 1.4% | 32.2% |
+
+  No threshold meets FP ≤ 5% with most injections caught. None even meets
+  the kill line (FP ≤ 20% with recall ≥ 50%): **KILL as drafted.**
+- **What it flags:** Pagila query results score 1.0, even
+  `{"status": "succeeded", "rows": [{"not_returned": 241}]}`. The model,
+  trained on prompts, reacts to the JSON envelope, not to instructions.
+- **The script's first verdict line said "PASS".** That was a bug: it
+  checked only the false-positive rate, not recall. It is fixed, and the
+  verdict above follows the criterion as written.
+
+**One variant, declared here before it runs:**
+- *Variant B* scores only a JSON output's string values (each on its own
+  line), leaving out keys, numbers and punctuation. Non-JSON text is scored
+  as it is. Same thresholds, same samples, same criteria.
+- If Variant B also fails the kill line, the model layer is dropped (rules
+  only, the Phase 1 fallback). No further variants are tried in v1.
+
