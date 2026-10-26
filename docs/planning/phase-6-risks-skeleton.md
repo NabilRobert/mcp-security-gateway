@@ -296,3 +296,31 @@ on Linux before quoting a number.
 | 2 Harness through the gateway | PASS | Fresh filesystem upstream per session (slice F) |
 | 6 Audit log cost | PASS | `fsync` on by default |
 
+### Spike 7, declared before running (2026-10-27): can FastMCP replace the hand-built proxy?
+
+**Why:** Arthur asked for established frameworks and plugins wherever they
+can replace hand-built code. FastMCP (`PrefectHQ/fastmcp`, Apache-2.0,
+4.1.4, built on `mcp>=2.3.0,<3`) has:
+- a proxy (`create_proxy`, fresh backend session per request, tool results
+  relayed "untouched");
+- middleware hooks (`on_list_tools`, `on_call_tool`);
+- built-in rate-limiting, logging and error-handling middleware.
+
+Adopting it would supersede ADR-002, as Project 2's Spike 6 superseded
+pydantic-ai with Inspect.
+
+**Question:** behind a FastMCP proxy with our middleware, does everything
+still hold?
+- **Pass if all hold:**
+  1. Spike 1's transparency test passes through it (tool lists and the 60
+     replayed calls per upstream; JSON identical at the same protocol
+     version).
+  2. A middleware can read the caller set by the auth layer and refuse a
+     call before it reaches the upstream.
+  3. Key checking stays hashed and constant-time, through FastMCP's
+     `TokenVerifier` interface. Its `StaticTokenVerifier` stores keys in
+     plain text and is documented as never for production, so it is not
+     used.
+  4. The existing 65 tests pass after the port, behaviour unchanged.
+- **Fail:** keep ADR-002 as built, and record why.
+
