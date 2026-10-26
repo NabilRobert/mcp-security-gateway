@@ -324,3 +324,33 @@ still hold?
   4. The existing 65 tests pass after the port, behaviour unchanged.
 - **Fail:** keep ADR-002 as built, and record why.
 
+### Spike 7 result: FAIL on criterion 1 only — FastMCP changes every tool definition (2026-10-27)
+
+`spikes/s7_fastmcp.py`, in a separate venv (`.venv-spike7`: FastMCP 4.1.4
+on `mcp` 2.3.0). It ran Spike 1's replay through `create_proxy` routes, with
+a `TokenVerifier` subclass doing our hashed key check and a policy
+middleware.
+
+| Criterion | Result |
+|---|---|
+| 1. Transparency | **Results: 60/60 identical per upstream (120/120).** **Tool lists: not identical.** FastMCP adds two fields to every tool: a generated `title` ("list_tables" becomes "List Tables"; its source says some clients drop tools without one) and `_meta: {"fastmcp": {"tags": []}}`. Once both are removed, the lists are identical for both upstreams. Neither can be switched off by a setting. |
+| 2. Middleware sees the caller and refuses before the upstream | **Pass.** `get_access_token()` gave the right caller on all 122 calls. A denied `write_file` returned `is_error` and the file never appeared on disk. |
+| 3. Hashed, constant-time keys via `TokenVerifier` | **Pass.** A wrong key gets 401, and no OAuth discovery route is published. Its `WWW-Authenticate` text tells clients to "re-register", which is OAuth wording; harmless. |
+| 4. The 65 tests after a port | Not attempted, because criterion 1 failed. |
+
+**Also found:**
+- FastMCP mirrors the agent's protocol version onto the backend by default.
+  An agent on 2026-07-28 talking to the legacy-only filesystem server
+  failed with "Invalid request parameters" until the backend's mode was
+  pinned (`mode="legacy"`), as FastMCP's docs say to do for single-version
+  backends.
+- Per-call latency on the filesystem route: 4.6 ms through FastMCP, 2.0 ms
+  direct.
+
+**Decision, by the rule fixed in advance:** keep ADR-002 (the SDK's
+low-level `Server`). Whether to adopt FastMCP anyway, with "transparent
+apart from FastMCP's added `title` and `_meta.fastmcp`" as a documented
+exception, is a question for Arthur (see the handover's flags). The added
+fields don't reach the model in Inspect, which builds tools from name,
+description and schema only.
+

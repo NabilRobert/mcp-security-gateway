@@ -1,6 +1,8 @@
 .env
 .env.*
+.venv-spike7/
 .venv/
 HANDOVER*.md
 __pycache__/
 models/
+mutants/
