@@ -118,6 +118,13 @@ every call.
 - (b): refuses with 401 before any MCP session exists, which Phase 4
   requires.
 
+**As built (slice A, 2026-10-26):** (b) is Starlette's own
+`AuthenticationMiddleware`, with an `ApiKeyBackend` of ours and an
+`on_error` that writes the refusal to the audit log and answers 401. It is
+the framework the SDK's HTTP app already runs on, so nothing hand-rolled
+sits in the request path. The handlers read the caller from
+`ctx.request.scope["user"]`, as Spike 1 checked.
+
 **Details:**
 - Keys are 32 random bytes, shown once by `hash-key`. Only SHA-256 hashes
   are stored: a slow password hash is unnecessary for random keys of this
