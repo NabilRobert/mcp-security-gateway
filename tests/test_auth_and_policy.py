@@ -52,6 +52,27 @@ async def test_bad_keys_get_401_before_any_session(gateway: RunningGateway, head
     assert line["reason"].startswith("auth: ")
 
 
+async def test_healthz_needs_no_key_and_says_nothing_sensitive(gateway: RunningGateway) -> None:
+    async with httpx2.AsyncClient() as http:
+        response = await http.get(f"{gateway.base}/healthz")
+    assert response.status_code == 200
+    assert set(response.json()) == {"status", "version"}
+
+
+@pytest.mark.parametrize("path", ["/healthz/", "/healthzx", "/docs", "/openapi.json", "/"])
+async def test_only_the_exact_health_path_is_open(gateway: RunningGateway, path: str) -> None:
+    async with httpx2.AsyncClient() as http:
+        response = await http.get(f"{gateway.base}{path}")
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+async def test_no_api_docs_even_with_a_key(gateway: RunningGateway, path: str) -> None:
+    async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {KEY_A}"}) as http:
+        response = await http.get(f"{gateway.base}{path}")
+    assert response.status_code == 404
+
+
 async def test_a_refused_key_is_logged_by_fingerprint_only(gateway: RunningGateway) -> None:
     wrong = "a-wrong-key-that-must-not-appear-in-the-log"
     async with httpx2.AsyncClient() as http:

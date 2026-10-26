@@ -8,8 +8,9 @@ from typing import Any
 import pytest
 import yaml
 from conftest import FakeUpstream, in_memory, make_config, running_gateway
+from typer.testing import CliRunner
 
-from mcp_gateway.cli import main
+from mcp_gateway.cli import app as cli
 from mcp_gateway.config import ConfigError, load_config
 
 
@@ -91,16 +92,23 @@ async def test_a_policy_naming_a_tool_the_upstream_lacks_fails_at_start(tmp_path
             pass
 
 
-def test_hash_key_prints_a_key_and_its_hash(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["hash-key"]) == 0
-    out = capsys.readouterr().out.splitlines()
-    key = out[0].rsplit(": ", 1)[1]
-    digest = out[1].rsplit(": ", 1)[1]
+def test_hash_key_prints_a_key_and_its_hash() -> None:
+    result = CliRunner().invoke(cli, ["hash-key"])
+    assert result.exit_code == 0
+    key, digest = (line.rsplit(": ", 1)[1] for line in result.stdout.splitlines())
     assert len(key) >= 40 and hashlib.sha256(key.encode()).hexdigest() == digest
 
 
-def test_serve_exits_2_on_a_bad_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_serve_exits_2_on_a_bad_config(tmp_path: Path) -> None:
     path = tmp_path / "bad.yaml"
     path.write_text("upstreams: {}\n")
-    assert main(["serve", "--config", str(path)]) == 2
-    assert "invalid config" in capsys.readouterr().err
+    result = CliRunner().invoke(cli, ["serve", "--config", str(path)])
+    assert result.exit_code == 2
+    assert "invalid config" in result.stderr
+
+
+def test_the_config_path_can_come_from_the_environment(tmp_path: Path) -> None:
+    path = tmp_path / "bad.yaml"
+    path.write_text("upstreams: {}\n")
+    result = CliRunner().invoke(cli, ["serve"], env={"MCP_GATEWAY_CONFIG": str(path)})
+    assert result.exit_code == 2 and str(path) in result.stderr

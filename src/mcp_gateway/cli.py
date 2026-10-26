@@ -1,47 +1,56 @@
-"""`mcp-gateway serve | hash-key | verify-log`. Exit codes: 0 ok, 1 the log
-doesn't verify, 2 the gateway can't start (bad config, unreachable upstream)."""
+"""`mcp-gateway serve | hash-key | verify-log`, on Typer.
 
-import argparse
+Exit codes: 0 ok, 1 the log doesn't verify, 2 the gateway can't start (bad
+config, unreachable upstream). Options can also come from `MCP_GATEWAY_*`
+environment variables.
+"""
+
 import asyncio
-import sys
 from pathlib import Path
+from typing import Annotated
 
-from mcp_gateway.app import serve
+import typer
+
+from mcp_gateway.app import serve as serve_gateway
 from mcp_gateway.audit import AuditError, verify_chain
 from mcp_gateway.auth import new_key
 from mcp_gateway.config import ConfigError, load_config
 
+app = typer.Typer(add_completion=False, no_args_is_help=True, help="A small, measured security gateway for MCP.")
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="mcp-gateway")
-    commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("serve", help="run the gateway")
-    run.add_argument("--config", type=Path, required=True)
-    run.add_argument("--host", default="127.0.0.1")
-    run.add_argument("--port", type=int, default=8080)
-    commands.add_parser("hash-key", help="make a new caller key and print it with its hash")
-    verify = commands.add_parser("verify-log", help="check an audit log's hash chain")
-    verify.add_argument("path", type=Path)
-    args = parser.parse_args(argv)
 
-    if args.command == "hash-key":
-        key, digest = new_key()
-        print(f"key (give it to the caller; it is not stored anywhere): {key}")
-        print(f"key_sha256 (put this in the config): {digest}")
-        return 0
-    if args.command == "verify-log":
-        problems = verify_chain(args.path)
-        for problem in problems:
-            print(problem)
-        print("ok" if not problems else f"{len(problems)} problem(s)")
-        return 1 if problems else 0
+@app.command()
+def serve(
+    config: Annotated[Path, typer.Option(envvar="MCP_GATEWAY_CONFIG", help="the gateway's YAML config")],
+    host: Annotated[str, typer.Option(envvar="MCP_GATEWAY_HOST")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(envvar="MCP_GATEWAY_PORT")] = 8080,
+) -> None:
+    """Run the gateway."""
     try:
-        asyncio.run(serve(load_config(args.config), host=args.host, port=args.port))
+        asyncio.run(serve_gateway(load_config(config), host=host, port=port))
     except (ConfigError, AuditError) as exc:
-        print(f"mcp-gateway: {exc}", file=sys.stderr)
-        return 2
-    return 0
+        typer.echo(f"mcp-gateway: {exc}", err=True)
+        raise typer.Exit(2) from exc
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+@app.command("hash-key")
+def hash_key() -> None:
+    """Make a new caller key and print it with its hash."""
+    key, digest = new_key()
+    typer.echo(f"key (give it to the caller; it is not stored anywhere): {key}")
+    typer.echo(f"key_sha256 (put this in the config): {digest}")
+
+
+@app.command("verify-log")
+def verify_log(path: Path) -> None:
+    """Check an audit log's hash chain."""
+    problems = verify_chain(path)
+    for problem in problems:
+        typer.echo(problem)
+    typer.echo("ok" if not problems else f"{len(problems)} problem(s)")
+    if problems:
+        raise typer.Exit(1)
+
+
+def main() -> None:
+    app()

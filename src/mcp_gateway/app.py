@@ -15,14 +15,12 @@ from typing import cast
 
 import httpx2
 import uvicorn
+from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import PaginatedRequestParams, Tool
-from starlette.applications import Starlette
-from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
-from starlette.routing import Mount
 
 from mcp_gateway import __version__
 from mcp_gateway.audit import AuditError, AuditLog
@@ -79,13 +77,16 @@ async def open_routes(
     return routes
 
 
-def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) -> Starlette:
+OPEN_PATHS = frozenset({"/healthz"})
+
+
+def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) -> FastAPI:
     apps = {name: route.server().streamable_http_app(streamable_http_path="/") for name, route in routes.items()}
 
     @contextlib.asynccontextmanager
-    async def lifespan(_: Starlette) -> AsyncIterator[None]:
-        # Starlette doesn't run a mounted app's lifespan, and each route's
-        # session manager lives in its own.
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # A mounted app's lifespan isn't run by its parent, and each route's
+        # MCP session manager lives in its own.
         async with AsyncExitStack() as stack:
             for sub in apps.values():
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
@@ -106,17 +107,22 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
         except AuditError as error:
             print(f"mcp-gateway: {error}", file=sys.stderr)
 
-    return Starlette(
-        routes=[Mount(f"/mcp/{name}", app=app) for name, app in apps.items()],
-        middleware=[
-            Middleware(
-                AuthenticationMiddleware,
-                backend=ApiKeyBackend(config.callers),
-                on_error=unauthorized_handler(on_reject),
-            )
-        ],
-        lifespan=lifespan,
+    # No interactive docs or OpenAPI schema: a security gateway shouldn't
+    # describe itself to whoever asks.
+    app = FastAPI(title="mcp-gateway", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(
+        AuthenticationMiddleware,
+        backend=ApiKeyBackend(config.callers, open_paths=OPEN_PATHS),
+        on_error=unauthorized_handler(on_reject),
     )
+
+    @app.get("/healthz")
+    async def healthz() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+        return {"status": "ok", "version": __version__}
+
+    for name, sub in apps.items():
+        app.mount(f"/mcp/{name}", sub)
+    return app
 
 
 async def serve(

@@ -60,10 +60,15 @@ def new_key() -> tuple[str, str]:
 
 
 class ApiKeyBackend(AuthenticationBackend):
-    def __init__(self, callers: Mapping[str, Caller]) -> None:
+    def __init__(self, callers: Mapping[str, Caller], open_paths: frozenset[str] = frozenset()) -> None:
         self._hashes = [(caller_id, bytes.fromhex(c.key_sha256)) for caller_id, c in callers.items()]
+        # Exact paths that need no key (the health check). Everything else,
+        # every MCP route included, does.
+        self._open_paths = open_paths
 
-    async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, BaseUser]:
+    async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, BaseUser] | None:
+        if conn.url.path in self._open_paths:
+            return None
         header = conn.headers.get("authorization", "")
         scheme, _, key = header.partition(" ")
         key = key.strip()
