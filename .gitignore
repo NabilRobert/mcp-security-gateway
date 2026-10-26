@@ -3,3 +3,4 @@
 .venv/
 HANDOVER*.md
 __pycache__/
+models/

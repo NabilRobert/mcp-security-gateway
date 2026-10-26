@@ -5,6 +5,9 @@ description = "A small, measured security gateway for MCP servers"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "mcp==2.3.0",
+    "numpy==2.5.4",
+    "onnxruntime==1.31.0",
+    "tokenizers==0.23.3",
 ]
 
 [dependency-groups]
