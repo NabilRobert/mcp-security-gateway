@@ -192,4 +192,13 @@ families were not loaded.
   as it is. Same thresholds, same samples, same criteria.
 - If Variant B also fails the kill line, the model layer is dropped (rules
   only, the Phase 1 fallback). No further variants are tried in v1.
+- **Correction, found while implementing and before running.** The first
+  run pasted injections into JSON outputs as raw text, which breaks the
+  JSON, so its recall was inflated by the same JSON effect that causes the
+  false positives. The rerun therefore:
+  - plants each injection inside a string value when the host is JSON (the
+    first, middle or last string, or a new `note` field when there is
+    none), and as text otherwise;
+  - scores both raw and Variant B on the same samples, so the comparison
+    is like for like.
 
