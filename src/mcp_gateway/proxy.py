@@ -12,7 +12,7 @@ import re
 import sys
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 from weakref import WeakKeyDictionary
 
 from mcp import Client
@@ -34,13 +34,19 @@ from mcp_gateway.detect import Detector
 from mcp_gateway.policy import allowed_tools, check_call
 
 UPSTREAM_ERROR = -32001  # the gateway's own code: the upstream failed, not the agent
-SECRET_NAME = re.compile(r"key|token|password|secret", re.IGNORECASE)
+SECRET_NAME = re.compile(r"key|token|password|passwd|secret|authorization|credential|cookie", re.IGNORECASE)
 REDACTED = "<redacted>"
 
 
-def redact(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Arguments as logged: any field whose name looks like a secret is hidden."""
-    return {k: REDACTED if SECRET_NAME.search(k) else v for k, v in arguments.items()}
+def redact(value: Any) -> Any:
+    """Arguments as logged: any field, at any depth, whose name looks like a
+    secret is hidden."""
+    if isinstance(value, dict):
+        items = cast(dict[str, Any], value).items()
+        return {k: REDACTED if SECRET_NAME.search(str(k)) else redact(v) for k, v in items}
+    if isinstance(value, list):
+        return [redact(v) for v in cast(list[Any], value)]
+    return value
 
 
 def text_of(result: CallToolResult) -> str:

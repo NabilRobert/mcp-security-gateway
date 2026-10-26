@@ -23,7 +23,7 @@ from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
 
 from mcp_gateway import __version__
-from mcp_gateway.audit import AuditError, AuditLog
+from mcp_gateway.audit import AuditError, AuditLog, verify_chain
 from mcp_gateway.auth import ApiKeyBackend, KeyRejected, unauthorized_handler
 from mcp_gateway.config import ConfigError, GatewayConfig, HttpUpstream, StdioUpstream
 from mcp_gateway.detect import Detector, StubDetector
@@ -179,8 +179,14 @@ async def _serve(
 ) -> None:
     async with AsyncExitStack() as stack:
         routes = await open_routes(stack, config, audit, detector, connect)
+        # A broken chain is reported, not fatal: refusing to start would let
+        # anyone who can edit the log keep the gateway down.
+        problems = verify_chain(config.audit.path)
+        for problem in problems:
+            print(f"mcp-gateway: audit log: {problem}", file=sys.stderr)
         audit.append(
             "start",
+            chain_problems=len(problems),
             version=__version__,
             git_sha=os.environ.get("MCP_GATEWAY_GIT_SHA"),
             policy_sha256=config.policy_hash(),

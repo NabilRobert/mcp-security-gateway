@@ -12,7 +12,8 @@ from typing import Annotated
 import typer
 
 from mcp_gateway.app import serve as serve_gateway
-from mcp_gateway.audit import AuditError, verify_chain
+from mcp_gateway.audit import AuditError
+from mcp_gateway.audit import verify_log as check_log
 from mcp_gateway.auth import new_key
 from mcp_gateway.config import ConfigError, load_config
 
@@ -43,13 +44,14 @@ def hash_key() -> None:
 
 @app.command("verify-log")
 def verify_log(path: Path) -> None:
-    """Check an audit log's hash chain."""
-    problems = verify_chain(path)
-    for problem in problems:
-        typer.echo(problem)
-    typer.echo("ok" if not problems else f"{len(problems)} problem(s)")
-    if problems:
+    """Check an audit log's hash chain. Exit 1 if it was altered."""
+    report = check_log(path)
+    for line in report.problems + report.recoveries + report.unfinished_calls:
+        typer.echo(line)
+    if report.problems:
+        typer.echo(f"{len(report.problems)} problem(s) in {report.lines} lines: the log was altered")
         raise typer.Exit(1)
+    typer.echo(f"ok: {report.lines} lines, chain intact")
 
 
 def main() -> None:
