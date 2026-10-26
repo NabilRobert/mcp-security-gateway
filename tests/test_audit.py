@@ -19,6 +19,7 @@ from mcp_gateway.auth import CallerUser
 from mcp_gateway.cli import app as cli
 from mcp_gateway.detect import StubDetector
 from mcp_gateway.proxy import REDACTED, Route, redact
+from mcp_gateway.upstreams import SharedUpstream
 
 pytestmark = pytest.mark.anyio
 
@@ -142,7 +143,7 @@ async def test_a_call_is_refused_when_the_log_cant_be_written(tmp_path: Path) ->
     audit.close()  # every write now fails
     fake = FakeUpstream()
     async with Client(fake.server()) as upstream:
-        route = Route("fake", upstream, config, audit, StubDetector())
+        route = Route("fake", SharedUpstream(upstream), config, audit, StubDetector())
         ctx: Any = type("Ctx", (), {})()
         ctx.session = FakeSession()
         ctx.request = Request({"type": "http", "user": CallerUser("alpha"), "headers": []})

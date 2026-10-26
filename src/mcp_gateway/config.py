@@ -38,6 +38,13 @@ class StdioUpstream(_Model):
     transport: Literal["stdio"]
     command: str
     args: list[str] = []
+    # The SDK starts stdio servers with a minimal environment, not the
+    # gateway's; a working directory is the clean way to point `python -m`
+    # at a package.
+    cwd: Path | None = None
+    # A fresh process for every MCP session, for servers that keep state
+    # between calls (ADR-010). Needs session-based clients.
+    per_session: bool = False
 
 
 Upstream = Annotated[HttpUpstream | StdioUpstream, Field(discriminator="transport")]

@@ -7,27 +7,33 @@ clients they forward to (Spike 1).
 """
 
 import contextlib
+import functools
 import os
 import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import cast
 
+import anyio
 import httpx2
 import uvicorn
+from anyio.abc import TaskGroup
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
 from mcp.types import PaginatedRequestParams, Tool
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mcp_gateway import __version__
 from mcp_gateway.audit import AuditError, AuditLog, verify_chain
-from mcp_gateway.auth import ApiKeyBackend, KeyRejected, unauthorized_handler
+from mcp_gateway.auth import ApiKeyBackend, CallerUser, KeyRejected, unauthorized_handler
 from mcp_gateway.config import ConfigError, DetectorSettings, GatewayConfig, HttpUpstream, StdioUpstream
 from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDetector, StubDetector
 from mcp_gateway.proxy import Route
+from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
 
@@ -35,7 +41,9 @@ Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextMana
 @contextlib.asynccontextmanager
 async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) -> AsyncIterator[Client]:  # noqa: ARG001
     if isinstance(upstream, StdioUpstream):
-        async with Client(StdioServerParameters(command=upstream.command, args=upstream.args)) as client:
+        async with Client(
+            StdioServerParameters(command=upstream.command, args=upstream.args, cwd=upstream.cwd)
+        ) as client:
             yield client
         return
     headers = {"Authorization": f"Bearer {os.environ[upstream.auth_env]}"} if upstream.auth_env else {}
@@ -58,13 +66,24 @@ async def list_all_tools(client: Client) -> list[Tool]:
 
 
 async def open_routes(
-    stack: AsyncExitStack, config: GatewayConfig, audit: AuditLog, detector: Detector, connect: Connect
+    stack: AsyncExitStack,
+    config: GatewayConfig,
+    audit: AuditLog,
+    detector: Detector,
+    connect: Connect,
+    tasks: TaskGroup,
 ) -> dict[str, Route]:
     routes: dict[str, Route] = {}
     for name, upstream in config.upstreams.items():
+        per_session = isinstance(upstream, StdioUpstream) and upstream.per_session
         try:
-            client = await stack.enter_async_context(connect(name, upstream))
-            tools = {tool.name for tool in await list_all_tools(client)}
+            if per_session:
+                # One probe process to check the tool list, then one per session.
+                async with connect(name, upstream) as probe:
+                    tools = {tool.name for tool in await list_all_tools(probe)}
+            else:
+                client = await stack.enter_async_context(connect(name, upstream))
+                tools = {tool.name for tool in await list_all_tools(client)}
         except Exception as exc:
             cause = _leaf(exc)
             raise ConfigError(f"upstream {name!r} is unreachable: {type(cause).__name__}: {cause}") from exc
@@ -73,11 +92,36 @@ async def open_routes(
             missing = sorted(set(route_policy.tools) - tools) if route_policy else []
             if missing:
                 raise ConfigError(f"policy {policy_id!r} allows tools that {name!r} doesn't have: {missing}")
-        routes[name] = Route(name, client, config, audit, detector)
+        if per_session:
+            sessions = PerSessionUpstreams(name, functools.partial(connect, name, upstream), tasks)
+            stack.callback(sessions.close_all)  # runs before the task group waits for its tasks
+            routes[name] = Route(name, sessions, config, audit, detector)
+        else:
+            routes[name] = Route(name, SharedUpstream(client), config, audit, detector)  # pyright: ignore[reportPossiblyUnboundVariable]
     return routes
 
 
 OPEN_PATHS = frozenset({"/healthz"})
+
+
+class SessionEndHook:
+    """Tells a route when its client deletes a session (HTTP DELETE with an
+    Mcp-Session-Id), after the SDK has handled the request."""
+
+    def __init__(self, app: ASGIApp, routes: dict[str, Route]) -> None:
+        self.app = app
+        self.routes = routes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self.app(scope, receive, send)
+        if scope["type"] != "http" or scope.get("method") != "DELETE":
+            return
+        parts = str(scope.get("path", "")).strip("/").split("/")
+        route = self.routes.get(parts[1]) if len(parts) >= 2 and parts[0] == "mcp" else None
+        user = scope.get("user")
+        session = dict(scope.get("headers", [])).get(MCP_SESSION_ID_HEADER.encode(), b"").decode()
+        if route is not None and isinstance(user, CallerUser) and session:
+            route.session_ended(session, user.caller_id)
 
 
 def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) -> FastAPI:
@@ -110,6 +154,8 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
     # No interactive docs or OpenAPI schema: a security gateway shouldn't
     # describe itself to whoever asks.
     app = FastAPI(title="mcp-gateway", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    # Added first, so it runs inside the auth middleware and sees the caller.
+    app.add_middleware(SessionEndHook, routes=routes)
     app.add_middleware(
         AuthenticationMiddleware,
         backend=ApiKeyBackend(config.callers, open_paths=OPEN_PATHS),
@@ -200,7 +246,8 @@ async def _serve(
     started: Callable[[uvicorn.Server], None] | None,
 ) -> None:
     async with AsyncExitStack() as stack:
-        routes = await open_routes(stack, config, audit, detector, connect)
+        tasks = await stack.enter_async_context(anyio.create_task_group())
+        routes = await open_routes(stack, config, audit, detector, connect, tasks)
         # A broken chain is reported, not fatal: refusing to start would let
         # anyone who can edit the log keep the gateway down.
         problems = verify_chain(config.audit.path)

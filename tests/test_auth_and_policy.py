@@ -125,34 +125,74 @@ async def test_secret_looking_arguments_are_redacted_in_the_log(gateway: Running
 # --- the session is bound to the caller that opened it ----------------------
 
 
-class FakeSession:
-    """Stands in for a ServerSession (which, unlike `object()`, can be weakly referenced)."""
-
-
 @dataclass
 class FakeCtx:
-    session: object
     request: Request
 
 
-def ctx_for(session: object, caller: str) -> FakeCtx:
-    return FakeCtx(session, Request({"type": "http", "user": CallerUser(caller), "headers": []}))
+def ctx_for(session: str | None, caller: str | None) -> FakeCtx:
+    headers = [(b"mcp-session-id", session.encode())] if session else []
+    scope: dict[str, Any] = {"type": "http", "headers": headers}
+    if caller is not None:
+        scope["user"] = CallerUser(caller)
+    return FakeCtx(Request(scope))
+
+
+def make_route(tmp_path: Any) -> Route:
+    config = make_config(tmp_path)
+    return Route("fake", None, config, AuditLog(config.audit.path, fsync=False), StubDetector())  # type: ignore[arg-type]
 
 
 def test_a_session_cannot_switch_callers(tmp_path: Any) -> None:
-    config = make_config(tmp_path)
-    route = Route("fake", None, config, AuditLog(config.audit.path, fsync=False), StubDetector())  # type: ignore[arg-type]
-    session = FakeSession()
-    assert route._caller(ctx_for(session, "alpha")) == "alpha"  # type: ignore[arg-type]
-    assert route._caller(ctx_for(session, "alpha")) == "alpha"  # type: ignore[arg-type]
+    route = make_route(tmp_path)
+    assert route._caller(ctx_for("s1", "alpha")) == "alpha"  # type: ignore[arg-type]
+    assert route._caller(ctx_for("s1", "alpha")) == "alpha"  # type: ignore[arg-type]
     with pytest.raises(MCPError, match="another caller"):
-        route._caller(ctx_for(session, "bravo"))  # type: ignore[arg-type]
-    assert route._caller(ctx_for(FakeSession(), "bravo")) == "bravo"  # type: ignore[arg-type]
+        route._caller(ctx_for("s1", "bravo"))  # type: ignore[arg-type]
+    assert route._caller(ctx_for("s2", "bravo")) == "bravo"  # type: ignore[arg-type]
+
+
+def test_only_the_owner_can_end_a_session(tmp_path: Any) -> None:
+    route = make_route(tmp_path)
+    ended: list[str] = []
+
+    class Recorder:
+        def end(self, session: str) -> None:
+            ended.append(session)
+
+    route.upstreams = Recorder()  # type: ignore[assignment]
+    route._caller(ctx_for("s1", "alpha"))  # type: ignore[arg-type]
+    route.session_ended("s1", "bravo")
+    assert ended == []
+    route.session_ended("s1", "alpha")
+    assert ended == ["s1"]
 
 
 def test_an_unauthenticated_request_fails_closed(tmp_path: Any) -> None:
-    config = make_config(tmp_path)
-    route = Route("fake", None, config, AuditLog(config.audit.path, fsync=False), StubDetector())  # type: ignore[arg-type]
-    bare = FakeCtx(FakeSession(), Request({"type": "http", "headers": []}))
     with pytest.raises(MCPError, match="unauthenticated"):
-        route._caller(bare)  # type: ignore[arg-type]
+        make_route(tmp_path)._caller(ctx_for("s1", None))  # type: ignore[arg-type]
+
+
+async def test_another_callers_key_cant_use_a_session_over_http(gateway: RunningGateway) -> None:
+    """The real path: the SDK builds a new session object per request, so the
+    binding must hold on the Mcp-Session-Id itself."""
+    async with httpx2.AsyncClient() as http:
+        opened = await http.post(
+            gateway.url(), headers={**HEADERS, "Authorization": f"Bearer {KEY_A}"}, json=INITIALIZE
+        )
+        session = opened.headers["mcp-session-id"]
+        session_headers = {**HEADERS, "mcp-session-id": session, "mcp-protocol-version": "2025-11-25"}
+        await http.post(
+            gateway.url(),
+            headers={**session_headers, "Authorization": f"Bearer {KEY_A}"},
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        list_tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+        own = await http.post(
+            gateway.url(), headers={**session_headers, "Authorization": f"Bearer {KEY_A}"}, json=list_tools
+        )
+        other = await http.post(
+            gateway.url(), headers={**session_headers, "Authorization": f"Bearer {KEY_B}"}, json=list_tools
+        )
+    assert own.status_code == 200 and "echo" in own.text
+    assert "another caller" in other.text and "echo" not in other.text

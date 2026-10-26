@@ -13,10 +13,9 @@ import sys
 import time
 import uuid
 from typing import Any, cast
-from weakref import WeakKeyDictionary
 
-from mcp import Client
 from mcp.server import Server, ServerRequestContext
+from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
 from mcp.shared.exceptions import MCPError
 from mcp.types import (
     CallToolRequestParams,
@@ -32,6 +31,7 @@ from mcp_gateway.auth import CallerUser
 from mcp_gateway.config import GatewayConfig
 from mcp_gateway.detect import Detector, string_leaves
 from mcp_gateway.policy import allowed_tools, check_call
+from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams
 
 UPSTREAM_ERROR = -32001  # the gateway's own code: the upstream failed, not the agent
 SECRET_NAME = re.compile(r"key|token|password|passwd|secret|authorization|credential|cookie", re.IGNORECASE)
@@ -47,6 +47,13 @@ def redact(value: Any) -> Any:
     if isinstance(value, list):
         return [redact(v) for v in cast(list[Any], value)]
     return value
+
+
+def session_id_of(ctx: ServerRequestContext[Any, Any]) -> str | None:
+    request = ctx.request
+    headers = getattr(request, "headers", None)
+    value = headers.get(MCP_SESSION_ID_HEADER) if headers is not None else None
+    return value if isinstance(value, str) and value else None
 
 
 def text_of(result: CallToolResult) -> str:
@@ -97,15 +104,19 @@ def annotated_result(result: CallToolResult) -> CallToolResult:
 
 
 class Route:
-    def __init__(self, name: str, upstream: Client, config: GatewayConfig, audit: AuditLog, detector: Detector) -> None:
+    def __init__(
+        self, name: str, upstreams: Upstreams, config: GatewayConfig, audit: AuditLog, detector: Detector
+    ) -> None:
         self.name = name
-        self.upstream = upstream
+        self.upstreams = upstreams
         self.config = config
         self.audit = audit
         self.detector = detector
         self.policy_hash = config.policy_hash()
-        # A session is bound to the caller that opened it (Phase 3).
-        self._session_callers: WeakKeyDictionary[object, str] = WeakKeyDictionary()
+        # A session is bound to the caller that first used it (Phase 3), keyed
+        # by its Mcp-Session-Id: the SDK builds a new session object for every
+        # request, so object identity would bind nothing.
+        self._session_callers: dict[str, tuple[str, float]] = {}
 
     def server(self) -> Server:
         return Server(f"mcp-gateway/{self.name}", on_list_tools=self._list_tools, on_call_tool=self._call_tool)
@@ -116,17 +127,36 @@ class Route:
         if not isinstance(user, CallerUser):
             # Can't happen behind the auth middleware; fail closed if it does.
             raise MCPError(INVALID_REQUEST, "unauthenticated request")
-        bound = self._session_callers.setdefault(ctx.session, user.caller_id)
-        if bound != user.caller_id:
-            raise MCPError(INVALID_REQUEST, "this session belongs to another caller")
+        session = session_id_of(ctx)
+        if session is not None:
+            now = time.monotonic()
+            bound = self._session_callers.get(session)
+            if bound is not None and bound[0] != user.caller_id:
+                raise MCPError(INVALID_REQUEST, "this session belongs to another caller")
+            if bound is None and len(self._session_callers) > 10_000:
+                self._forget_idle(now)
+            self._session_callers[session] = (user.caller_id, now)
         return user.caller_id
+
+    def _forget_idle(self, now: float) -> None:
+        for session, (_, seen) in list(self._session_callers.items()):
+            if now - seen > IDLE_TIMEOUT_S:
+                del self._session_callers[session]
+
+    def session_ended(self, session: str, caller: str) -> None:
+        """The client deleted its session. Only its owner can end it here."""
+        bound = self._session_callers.get(session)
+        if bound is not None and bound[0] == caller:
+            del self._session_callers[session]
+            self.upstreams.end(session)
 
     async def _list_tools(
         self, ctx: ServerRequestContext[Any, Any], params: PaginatedRequestParams | None
     ) -> ListToolsResult:
         caller = self._caller(ctx)
         allowed = allowed_tools(self.config.policy_for(caller), self.name)
-        result = await self.upstream.session.list_tools(params=params)
+        upstream = await self.upstreams.for_session(session_id_of(ctx))
+        result = await upstream.session.list_tools(params=params)
         return result.model_copy(update={"tools": [t for t in result.tools if t.name in allowed]})
 
     async def _call_tool(self, ctx: ServerRequestContext[Any, Any], params: CallToolRequestParams) -> CallToolResult:
@@ -155,7 +185,11 @@ class Route:
 
         start = time.perf_counter()
         try:
-            result = await self.upstream.session.call_tool(params.name, arguments)
+            upstream = await self.upstreams.for_session(session_id_of(ctx))
+            result = await upstream.session.call_tool(params.name, arguments)
+        except MCPError as exc:  # e.g. a per-session route asked for without a session
+            self._try_append("result", decision="upstream_error", error=exc.error.message, **_ids(record))
+            raise
         except Exception as exc:  # transport or protocol failure upstream
             self._try_append("result", decision="upstream_error", error=type(exc).__name__, **_ids(record))
             raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
