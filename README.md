@@ -142,7 +142,11 @@ uv run mutmut run                              # mutation testing
 ```
 
 Every slice was mutation-checked: the code was broken on purpose and a test
-had to fail. CI runs ruff, pyright (strict on `src`) and pytest.
+had to fail. A full mutmut run and its triage are in
+[docs/mutation-testing.md](docs/mutation-testing.md): the survivors that
+meant real gaps (the scorer behind the published numbers had no test, and
+nothing pinned the split) got tests, and the rest are classed as equivalent
+or cosmetic. CI runs ruff, pyright (strict on `src`) and pytest.
 
 ## Next
 
