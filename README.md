@@ -65,22 +65,33 @@ The split into dev (tuning) and test (published) is fixed by template
 family and by a hash of each output's text. Test is scored once per
 detector version.
 
-| Detector (dev split) | False positives | Recall |
-|---|---|---|
-| Rules | 0.0% | 100% |
-| Model (threshold 0.999) | 2.2% | 49.7% |
-| Rules + model | 2.8% | 100% |
+**Held-out test split**, scored once per detector version
+([`eval/results/`](eval/results/)): 1,119 benign and 632 injected samples,
+from injection families no rule was written from.
 
-These are **dev** numbers, with 858 benign and 543 injected samples, and
-timeouts counted as blocks as the gateway treats them.
-- The rules were written from the dev families, so their dev score is
-  overfitted by construction. The held-out test score is the real one, and
-  it is **pending**.
-- Large outputs can take seconds to scan on CPU, and a scan past the 2 s
-  timeout blocks the output: part of the model's false positives is that.
-- An int8 copy was tried to speed it up. It ran about 1.7× faster but lost
-  19 points of recall, failing the acceptance rule fixed beforehand, so the
-  fp32 model stays ([Phase 6](docs/planning/phase-6-risks-skeleton.md)).
+| Detector | False positives | Recall | Precision |
+|---|---|---|---|
+| Rules | 0.0% | 14.6% | 100% |
+| **Rules + model** (fp32, threshold 0.999) | **1.2%** | **49.7%** | **96.0%** |
+
+What it shows:
+- **The rules don't generalise.** They catch 100% of the dev split they
+  were written from, and 14.6% of unseen phrasings.
+- **The model does most of the real work.** Together, the two layers catch
+  about half of unseen injections, at a 1.2% false-positive rate.
+- **Weakest families:** messages addressed to the assistant (13%) and
+  conditionals ("if you are an AI…", 27%).
+- **Strongest families:** obfuscated text (87%) and Japanese (84%).
+- **False positives:** ordinary text such as a film description ("…who must
+  defeat…") and filesystem error messages.
+- **Timeouts:** a scan past the 2 s timeout blocks the output, and counts
+  here as flagged (3 of 1,751 samples).
+
+Dev numbers, for comparison: rules 0% FP / 100% recall; rules + model 2.8%
+FP / 100% recall. An int8 copy was tried to speed the model up. It ran
+about 1.7× faster but lost 19 points of recall, failing the acceptance rule
+fixed beforehand, so the fp32 model stays
+([Phase 6](docs/planning/phase-6-risks-skeleton.md)).
 
 **Not measured yet:** how often real models obey these injections, with
 and without the gateway. Those runs need a model budget. Until then, no
@@ -135,7 +146,6 @@ had to fail. CI runs ruff, pyright (strict on `src`) and pytest.
 
 ## Next
 
-- Score the held-out test split.
 - Real-model runs (slice H), when there is a budget.
 - Try Llama Prompt Guard 2 22M as the model layer, once its licence is
   accepted.

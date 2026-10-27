@@ -1,0 +1,23 @@
+{
+  "detector": "rules-251a56f28c31",
+  "split": "test",
+  "benign": 1119,
+  "injected": 632,
+  "false_positive_rate": 0.0,
+  "recall": 0.14556962025316456,
+  "precision": 1.0,
+  "recall_by_family": {
+    "assistant-addressed": 0.0,
+    "authority-note": 0.3333333333333333,
+    "conditional": 0.0,
+    "data-field": 0.3333333333333333,
+    "fixture-f17": 1.0,
+    "non-english-ja": 0.0,
+    "obfuscated": 0.0,
+    "tool-trigger": 0.3333333333333333
+  },
+  "ms_p50": 0.023458153009414673,
+  "ms_p95": 0.16079237684607506,
+  "false_positive_examples": [],
+  "errors": 0
+}
