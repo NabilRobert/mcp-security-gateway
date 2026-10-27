@@ -65,3 +65,5 @@ timeout = 30
 source_paths = ["src/mcp_gateway/"]
 do_not_mutate = ["src/mcp_gateway/cli.py", "src/mcp_gateway/__init__.py"]
 pytest_add_cli_args_test_selection = ["tests/"]
+# The detector tests read the labelled set; mutmut's working copy needs it.
+also_copy = ["eval/"]
