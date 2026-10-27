@@ -48,12 +48,12 @@ def test_path_within(value: str, prefix: str, inside: bool) -> None:
 
 def test_unknown_route_is_denied() -> None:
     verdict = check_call(POLICY, "other", "list_directory", {})
-    assert not verdict.allowed and "route" in verdict.reason
+    assert verdict.allowed is False and verdict.reason == "route 'other' not allowed"
 
 
 def test_unlisted_tool_is_denied() -> None:
     verdict = check_call(POLICY, "files", "write_file", {"path": "docs/a.md", "content": "x"})
-    assert not verdict.allowed and "tool 'write_file'" in verdict.reason
+    assert verdict.allowed is False and verdict.reason == "tool 'write_file' not allowed"
 
 
 def test_listed_tool_without_rules_is_allowed() -> None:
@@ -62,28 +62,37 @@ def test_listed_tool_without_rules_is_allowed() -> None:
 
 def test_prefix_rule_allows_inside_and_denies_traversal() -> None:
     assert check_call(POLICY, "files", "read_text_file", {"path": "docs/guide.md"}).allowed
-    assert not check_call(POLICY, "files", "read_text_file", {"path": "docs/../.env"}).allowed
+    assert check_call(POLICY, "files", "read_text_file", {"path": "docs/../.env"}).allowed is False
 
 
 def test_governed_argument_must_be_given() -> None:
     verdict = check_call(POLICY, "files", "read_text_file", {})
-    assert not verdict.allowed and "required by policy" in verdict.reason
+    assert verdict.allowed is False and verdict.reason == "argument 'path' is required by policy"
 
 
 def test_every_item_of_a_list_argument_is_checked() -> None:
     assert check_call(POLICY, "files", "read_multiple_files", {"paths": ["docs/a", "docs/b"]}).allowed
-    assert not check_call(POLICY, "files", "read_multiple_files", {"paths": ["docs/a", "config/db.toml"]}).allowed
+    assert check_call(POLICY, "files", "read_multiple_files", {"paths": ["docs/a", "config/db.toml"]}).allowed is False
+
+
+def test_refusal_reasons_name_the_argument() -> None:
+    assert check_call(POLICY, "files", "read_text_file", {"path": 3}).reason == "argument 'path' must be a string"
+    assert (
+        check_call(POLICY, "files", "read_text_file", {"path": "../x"}).reason
+        == "argument 'path' not allowed by policy"
+    )
+    assert check_call(POLICY, "files", "list_directory", {}).allowed is True
 
 
 def test_non_string_values_are_denied() -> None:
-    assert not check_call(POLICY, "files", "read_text_file", {"path": {"$ne": ""}}).allowed
-    assert not check_call(POLICY, "files", "read_multiple_files", {"paths": ["docs/a", 7]}).allowed
+    assert check_call(POLICY, "files", "read_text_file", {"path": {"$ne": ""}}).allowed is False
+    assert check_call(POLICY, "files", "read_multiple_files", {"paths": ["docs/a", 7]}).allowed is False
 
 
 def test_pattern_must_match_the_whole_value() -> None:
     assert check_call(POLICY, "files", "lookup", {"id": "4021"}).allowed
     # A search would accept this; a full match doesn't.
-    assert not check_call(POLICY, "files", "lookup", {"id": "4021; DROP TABLE"}).allowed
+    assert check_call(POLICY, "files", "lookup", {"id": "4021; DROP TABLE"}).allowed is False
 
 
 def test_allowed_tools() -> None:
