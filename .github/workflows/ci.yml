@@ -12,10 +12,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.13.1"
-      - run: uv sync --frozen --python 3.12
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
+      # The exact versions in uv.lock. --locked fails if uv.lock no longer
+      # matches pyproject.toml (--frozen would install the stale lock without
+      # a word); the steps after it use --frozen so nothing re-locks in CI.
+      - run: uv sync --locked --python 3.12
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen pyright
       # No network and no model: the tests use an in-memory upstream. The
       # real filesystem-server test skips here (the harness isn't checked out).
-      - run: uv run pytest -q
+      - run: uv run --frozen pytest -q
