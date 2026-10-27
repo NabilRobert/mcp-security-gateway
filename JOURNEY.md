@@ -102,6 +102,21 @@ That is the overfitting the split was built to expose. With the model, the
 two layers caught **49.7%** at **1.2%** false positives. The honest headline
 is "about half", and it is the one the README leads with.
 
+## Measuring it where it runs
+
+The detector's offline score said 1.2% false positives. Measured through
+the running gateway, the first version blocked **35%** of normal filesystem
+calls. The gateway scanned the server's repeated text twice, and a scan
+that timed out kept running and slowed every scan after it.
+
+After the fix (one scan at a time, timed-out scans stopped, repeated text
+scanned once), it blocks **2.5%** of held-out normal outputs. That is still
+twice the offline figure, because large outputs time out on a laptop CPU.
+
+The measurement also tripped over MCP-backbone's own rate limit: 810 of
+867 calls in one run were refusals, fast and wrong. Every timing script now
+refuses to report if any call was rate-limited.
+
 ## Not done yet
 
 - Real-model runs. They need a budget; until then, every published number

@@ -219,6 +219,15 @@ A paid LLM judge is ruled out by the $0 budget.
   - The model carries the generalisation.
   - Weakest families: assistant-addressed (13%) and conditional (27%).
     Strongest: obfuscated (87%) and Japanese (84%).
+- **Through the running gateway** (2026-10-28):
+  - The first version, scan `s1`, blocked 35% of filesystem calls on
+    timeouts. Repeated text was scanned twice, and a timed-out scan kept
+    running and slowed the next.
+  - Scan `s2` scans repeated text once, runs one scan at a time, and stops
+    a timed-out scan (`RunOptions.terminate`).
+  - Measured through the gateway on the held-out benign outputs, it blocks
+    **2.5%** (offline: 1.2%), mostly large outputs timing out on a laptop
+    CPU.
 - **Change from Phase 4:** an output larger than the scan cap is treated
   as unscanned and blocked unless `allow_unscanned_content` is set, instead
   of being cut and passed on. It is simpler, and it fails closed.
