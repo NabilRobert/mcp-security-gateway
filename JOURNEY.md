@@ -94,8 +94,15 @@ exactly:
 It also showed two costs plainly. A blocked output takes the honest answer
 with it. And a read-only allow-list stops writes but not leaks.
 
+## The held-out score
+
+The test split was scored once, at the end. The rules, written from the dev
+families, fell from 100% recall on dev to **14.6%** on unseen phrasings.
+That is the overfitting the split was built to expose. With the model, the
+two layers caught **49.7%** at **1.2%** false positives. The honest headline
+is "about half", and it is the one the README leads with.
+
 ## Not done yet
 
-- The held-out test score for the detector.
 - Real-model runs. They need a budget; until then, every published number
   says what it is and isn't.

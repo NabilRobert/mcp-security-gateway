@@ -207,6 +207,18 @@ A paid LLM judge is ruled out by the $0 budget.
     by construction; the test split is the real measure.
   - 12–21 scans per run timed out, mostly large outputs. Each one is a
     block, so latency (Spike 3) costs false positives, not just time.
+- **Held-out test score** (2026-10-27, once per version, in
+  `eval/results/`): 1,119 benign and 632 injected samples.
+
+  | Detector | False positives | Recall | Precision |
+  |---|---|---|---|
+  | Rules | 0.0% | 14.6% | 100% |
+  | Rules + model | 1.2% | 49.7% | 96.0% |
+
+  - The rules mostly learned the dev phrasings (100% on dev, 14.6% on test).
+  - The model carries the generalisation.
+  - Weakest families: assistant-addressed (13%) and conditional (27%).
+    Strongest: obfuscated (87%) and Japanese (84%).
 - **Change from Phase 4:** an output larger than the scan cap is treated
   as unscanned and blocked unless `allow_unscanned_content` is set, instead
   of being cut and passed on. It is simpler, and it fails closed.
