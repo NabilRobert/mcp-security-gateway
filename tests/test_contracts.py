@@ -128,8 +128,9 @@ async def test_the_result_line_records_real_numbers(tmp_path: Path) -> None:
     assert call["decision"] == "forwarding" and call["arguments"] == {"text": "hi", "password": "<redacted>"}
     assert result["decision"] == "allowed" and result["is_error"] is False
     text = "done: hi"
-    assert result["output_chars"] == len(text) * 2 + 1  # the text block plus structured content's string value
-    assert result["output_sha256"] == hashlib.sha256(f"{text}\n{text}".encode()).hexdigest()
+    # Structured content repeats the text, so it is scanned once, not twice.
+    assert result["output_chars"] == len(text)
+    assert result["output_sha256"] == hashlib.sha256(text.encode()).hexdigest()
     assert 50 <= result["upstream_ms"] < 5000  # milliseconds, measured around the upstream call
     assert result["detector"].startswith("rules-") and isinstance(result["scan_ms"], float)
 
