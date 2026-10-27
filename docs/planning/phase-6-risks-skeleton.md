@@ -348,9 +348,24 @@ middleware.
   direct.
 
 **Decision, by the rule fixed in advance:** keep ADR-002 (the SDK's
-low-level `Server`). Whether to adopt FastMCP anyway, with "transparent
+low-level `Server`). **Arthur confirmed this on 2026-10-27:** keep the SDK
+proxy. Whether to adopt FastMCP anyway, with "transparent
 apart from FastMCP's added `title` and `_meta.fastmcp`" as a documented
 exception, is a question for Arthur (see the handover's flags). The added
 fields don't reach the model in Inspect, which builds tools from name,
 description and schema only.
+
+### Spike 3 follow-up, int8 (Arthur's choice, 2026-10-27)
+
+- **First attempt failed outright.** onnxruntime's default
+  `quantize_dynamic` (int8 weights) made the model 244 MB, down from
+  739 MB. But it scores every text near 0.01: an obvious injection gets
+  0.0128, where fp32 gives 1.0. On dev at 0.99 its recall was **0.0%**.
+- **Likely cause:** the default also quantises the embedding lookups
+  (`Gather`), which is known to break models like this.
+- **Acceptance rule, fixed before trying variants:** an int8 variant is
+  acceptable only if, on dev at the same threshold, its recall is within 5
+  points and its false-positive rate within 1 point of fp32's. If no
+  variant passes, Arthur decides; the fallback is option (c), a lower
+  window cap.
 
