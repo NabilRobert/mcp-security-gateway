@@ -1,0 +1,120 @@
+{
+  "measured_on": "Apple M2, macOS; everything local (no network hop)",
+  "rounds": 3,
+  "calls_per_upstream": 60,
+  "audit_fsync": true,
+  "configurations": {
+    "detection off": {
+      "pagila (HTTP \u2192 HTTP)": {
+        "calls_timed": 180,
+        "direct_ms": {
+          "p50": 32.5,
+          "p95": 80.22
+        },
+        "gateway_ms": {
+          "p50": 38.91,
+          "p95": 91.68
+        },
+        "added_ms": {
+          "p50": 7.5,
+          "p95": 47.74
+        }
+      },
+      "filesystem (stdio \u2192 HTTP)": {
+        "calls_timed": 180,
+        "direct_ms": {
+          "p50": 2.52,
+          "p95": 7.26
+        },
+        "gateway_ms": {
+          "p50": 6.35,
+          "p95": 15.89
+        },
+        "added_ms": {
+          "p50": 3.66,
+          "p95": 11.89
+        }
+      },
+      "decisions": {
+        "files: allowed": 240,
+        "pagila: allowed": 240
+      }
+    },
+    "rules": {
+      "pagila (HTTP \u2192 HTTP)": {
+        "calls_timed": 180,
+        "direct_ms": {
+          "p50": 30.38,
+          "p95": 70.46
+        },
+        "gateway_ms": {
+          "p50": 36.86,
+          "p95": 76.78
+        },
+        "added_ms": {
+          "p50": 7.67,
+          "p95": 23.63
+        }
+      },
+      "filesystem (stdio \u2192 HTTP)": {
+        "calls_timed": 180,
+        "direct_ms": {
+          "p50": 2.17,
+          "p95": 2.91
+        },
+        "gateway_ms": {
+          "p50": 5.2,
+          "p95": 8.82
+        },
+        "added_ms": {
+          "p50": 2.99,
+          "p95": 6.25
+        }
+      },
+      "decisions": {
+        "files: allowed": 232,
+        "files: blocked": 8,
+        "pagila: allowed": 240
+      }
+    },
+    "rules + model": {
+      "pagila (HTTP \u2192 HTTP)": {
+        "calls_timed": 180,
+        "direct_ms": {
+          "p50": 26.73,
+          "p95": 51.71
+        },
+        "gateway_ms": {
+          "p50": 66.94,
+          "p95": 1916.4
+        },
+        "added_ms": {
+          "p50": 42.11,
+          "p95": 1889.53
+        }
+      },
+      "filesystem (stdio \u2192 HTTP)": {
+        "calls_timed": 180,
+        "direct_ms": {
+          "p50": 8.38,
+          "p95": 25.81
+        },
+        "gateway_ms": {
+          "p50": 570.79,
+          "p95": 2043.7
+        },
+        "added_ms": {
+          "p50": 567.34,
+          "p95": 2029.61
+        }
+      },
+      "decisions": {
+        "files: allowed": 127,
+        "files: blocked": 28,
+        "files: gateway_error": 85,
+        "pagila: allowed": 229,
+        "pagila: gateway_error": 11
+      }
+    }
+  }
+}
