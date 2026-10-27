@@ -1,0 +1,144 @@
+# mcp-gateway
+
+A small security gateway that sits between AI agents and
+[MCP](https://modelcontextprotocol.io) servers. It adds what most servers
+don't have: who may connect, which tools each caller may use, a tamper-evident
+record of every call, and a check of every tool output for prompt
+injection. Its injection defence is **measured, not claimed**.
+
+The agent connects to the gateway exactly as it would to the server; tool
+names, schemas and results pass through unchanged, except for what policy
+filters out.
+
+| Layer | What it does |
+|---|---|
+| Auth | Bearer API keys, stored as SHA-256 hashes, checked before any MCP session exists (Starlette's auth middleware) |
+| Policy | Per caller and route: allowed tools (deny by default), argument rules (path prefixes with `..` resolved, full-match patterns) |
+| Upstreams | HTTP or stdio; the gateway holds each server's own credential, so an agent's key opens only the gateway. Stateful stdio servers get one process per MCP session |
+| Detection | Every tool output (text and structured content) is read by pattern rules, then a local classifier (ProtectAI's DeBERTa prompt-injection model, ONNX on CPU). A flagged output is blocked (default), annotated, or logged |
+| Audit | Append-only JSONL with a hash chain, a line written *before* each call is forwarded; `mcp-gateway verify-log` |
+
+It fails closed: a detector error or timeout, content it can't scan, or an
+audit log it can't write all block the call.
+
+It is deliberately small, so it can be read and checked. For production use,
+look at IBM ContextForge, Docker's MCP Gateway, Microsoft's MCP Gateway or
+Enkrypt's Secure MCP Gateway ([ADR-001](docs/planning/phase-5-architecture-decisions.md)).
+
+Part of a portfolio, with
+[MCP-backbone](https://github.com/NabilRobert/MCP-backbone) (the database
+MCP server it protects) and
+[agent-eval-harness](https://github.com/NabilRobert/agent-eval-harness) (which
+measures it).
+
+## What is measured
+
+All of this cost $0: no paid model was called.
+
+**1. A scripted "gullible" agent through the gateway**
+([`eval/results/gullible/`](eval/results/gullible/README.md)). It obeys any
+instruction it reads, so it shows the gateway's mechanics, not how a real
+model behaves.
+- It ran a 12-task attack suite, built from the injection families the rules
+  were never written from.
+- Which attacks the detector would stop was predicted and committed before
+  the run.
+
+| Configuration | Attacks with effect | Questions answered |
+|---|---|---|
+| No gateway | 12/12 | 12/12 |
+| Gateway, detection off | 12/12 | 12/12 |
+| **Gateway, detection on** | **5/12** (exactly the prediction) | 5/12 |
+| Gateway, read-only tools only | 9/12 | 12/12 |
+
+What it shows:
+- The proxy alone changes nothing.
+- Blocking a poisoned output also withholds the honest answer in it.
+- Least privilege stops writes but not leaks.
+
+**2. The detector, offline, on labelled tool outputs**
+([`eval/`](src/mcp_gateway/eval/)). The benign side is 1,977 real outputs,
+replayed from the harness's recorded runs. The injected side plants 39
+templates into them.
+
+The split into dev (tuning) and test (published) is fixed by template
+family and by a hash of each output's text. Test is scored once per
+detector version.
+
+| Detector (dev split) | False positives | Recall |
+|---|---|---|
+| Rules | 0.0% | 100% |
+| Model (threshold 0.999) | 2.2% | 49.7% |
+| Rules + model | 2.8% | 100% |
+
+These are **dev** numbers, with 858 benign and 543 injected samples, and
+timeouts counted as blocks as the gateway treats them.
+- The rules were written from the dev families, so their dev score is
+  overfitted by construction. The held-out test score is the real one, and
+  it is **pending**.
+- Large outputs can take seconds to scan on CPU, and a scan past the 2 s
+  timeout blocks the output: part of the model's false positives is that.
+- An int8 copy was tried to speed it up. It ran about 1.7× faster but lost
+  19 points of recall, failing the acceptance rule fixed beforehand, so the
+  fp32 model stays ([Phase 6](docs/planning/phase-6-risks-skeleton.md)).
+
+**Not measured yet:** how often real models obey these injections, with
+and without the gateway. Those runs need a model budget. Until then, no
+number here should be read as "the gateway stops X% of injections".
+
+## Quick start
+
+```bash
+uv sync
+uv run mcp-gateway hash-key            # prints a caller key (shown once) and its hash
+cp examples/gateway.yaml gateway.yaml  # put the hash in, quoted; list upstreams and policies
+uv run mcp-gateway serve --config gateway.yaml
+```
+
+The agent connects to `http://127.0.0.1:8080/mcp/<upstream>/` with
+`Authorization: Bearer <key>`. To check the audit log:
+
+```bash
+uv run mcp-gateway verify-log logs/audit.jsonl
+```
+
+The model layer needs the classifier on disk. It's a 739 MB download from
+Hugging Face (`protectai/deberta-v3-base-prompt-injection-v2`, revision
+`90c9989b1a34`). Without it, set `detector.model` to null and the rules
+run alone.
+
+## Design
+
+- [Threat model](THREAT_MODEL.md): what it defends against, the evidence,
+  and what it doesn't defend against.
+- [Planning trail](docs/planning/README.md): seven phases, written before
+  the code, including the ADRs and the spike results.
+- [Journey](JOURNEY.md): what the spikes found, the bugs the tests caught,
+  and what was reversed.
+
+Built on the MCP Python SDK's low-level `Server` (ADR-002), with FastAPI,
+Starlette's auth, Pydantic, Typer and onnxruntime. FastMCP's proxy was
+tried and kept out (Spike 7): it adds fields to every tool definition.
+
+## Development
+
+```bash
+uv sync
+uv run ruff check . && uv run ruff format --check . && uv run pyright
+uv run pytest                                  # no network, no model
+MCP_GATEWAY_LOCAL_TESTS=1 uv run pytest        # plus the replay against the real servers
+uv run mutmut run                              # mutation testing
+```
+
+Every slice was mutation-checked: the code was broken on purpose and a test
+had to fail. CI runs ruff, pyright (strict on `src`) and pytest.
+
+## Next
+
+- Score the held-out test split.
+- Real-model runs (slice H), when there is a budget.
+- Try Llama Prompt Guard 2 22M as the model layer, once its licence is
+  accepted.
+- Attack tasks on the database (planted rows in a separate copy of the
+  demo data).
+- Scan tool descriptions, and add a rate limit per key.
