@@ -269,3 +269,86 @@ async def test_a_busy_session_upstream_is_kept() -> None:
 def test_json_arrays_and_indented_json_are_reduced_to_strings() -> None:
     assert text_for_scanning(json.dumps([{"a": "x"}, "y", 3])) == "x\ny"
     assert text_for_scanning("  \n" + json.dumps({"a": "x"})) == "x"
+
+
+# --- the session-end hook only acts on a real session delete ---------------------
+
+
+class Recorder:
+    def __init__(self) -> None:
+        self.ended: list[tuple[str, str]] = []
+
+    def session_ended(self, session: str, caller: str) -> None:
+        self.ended.append((session, caller))
+
+
+async def run_hook(method: str, path: str, headers: list[tuple[bytes, bytes]], user: Any) -> Recorder:
+    from mcp_gateway.app import SessionEndHook
+
+    route = Recorder()
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:  # noqa: ARG001
+        return None
+
+    hook = SessionEndHook(app, {"fake": route})  # type: ignore[dict-item]
+    scope: dict[str, Any] = {"type": "http", "method": method, "path": path, "headers": headers}
+    if user is not None:
+        scope["user"] = user
+    await hook(scope, None, None)  # type: ignore[arg-type]  # the fake app reads neither
+    return route
+
+
+async def test_the_hook_ends_the_owners_session() -> None:
+    route = await run_hook("DELETE", "/mcp/fake/", [(b"mcp-session-id", b"s1")], CallerUser("alpha"))
+    assert route.ended == [("s1", "alpha")]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "headers", "user"),
+    [
+        ("DELETE", "/mcp/fake/", [], CallerUser("alpha")),  # no session id
+        ("DELETE", "/other/fake/", [(b"mcp-session-id", b"s1")], CallerUser("alpha")),  # not an MCP route
+        ("DELETE", "/mcp/unknown/", [(b"mcp-session-id", b"s1")], CallerUser("alpha")),  # unknown route
+        ("DELETE", "/mcp/fake/", [(b"mcp-session-id", b"s1")], None),  # nobody authenticated
+        ("POST", "/mcp/fake/", [(b"mcp-session-id", b"s1")], CallerUser("alpha")),  # not a delete
+        ("DELETE", "/", [(b"mcp-session-id", b"s1")], CallerUser("alpha")),  # too short a path
+    ],
+)
+async def test_the_hook_ignores_everything_else(method: str, path: str, headers: Any, user: Any) -> None:
+    route = await run_hook(method, path, headers, user)
+    assert route.ended == []
+
+
+# --- session bindings don't grow forever ---------------------------------------
+
+
+def test_idle_session_bindings_are_forgotten_past_the_cap(tmp_path: Path) -> None:
+    import time
+
+    route = route_with(tmp_path, BrokenClient())
+    old = time.monotonic() - 10 * 60 * 60  # ten hours ago, past the idle timeout
+    route._session_callers = {f"old-{i}": ("alpha", old) for i in range(10_001)}  # pyright: ignore[reportPrivateUsage]
+    route._session_callers["recent"] = ("alpha", time.monotonic())  # pyright: ignore[reportPrivateUsage]
+    route._caller(ctx())  # a new session ("s1") arrives  # pyright: ignore[reportPrivateUsage]
+    assert set(route._session_callers) == {"recent", "s1"}  # pyright: ignore[reportPrivateUsage]
+
+
+# --- detection off is built from the config, not only injected -----------------
+
+
+def test_detection_off_builds_the_off_detector() -> None:
+    from mcp_gateway.app import build_detector
+    from mcp_gateway.config import DetectorSettings
+    from mcp_gateway.detect import LayeredDetector
+
+    assert build_detector(DetectorSettings(rules=False)).version == "off"
+    rules_only = build_detector(DetectorSettings(rules=True))
+    assert isinstance(rules_only, LayeredDetector) and rules_only.version.startswith("rules-")
+
+
+def test_a_model_that_wont_load_is_a_config_error(tmp_path: Path) -> None:
+    from mcp_gateway.app import build_detector
+    from mcp_gateway.config import ConfigError, DetectorSettings, ModelSettings
+
+    with pytest.raises(ConfigError, match="can't load the detector model"):
+        build_detector(DetectorSettings(model=ModelSettings(dir=tmp_path, threshold=0.999)))
