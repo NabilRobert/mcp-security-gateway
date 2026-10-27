@@ -20,6 +20,7 @@ import os
 import secrets
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -33,8 +34,10 @@ FIXTURE = HARNESS / "suites" / "fixtures" / "acme-shop-attacks"
 MODEL = ROOT / "models/protectai-deberta-v3-base-prompt-injection-v2/90c9989b1a342275dd0d1a95aad283c04e075671"
 OUT = ROOT / "eval" / "results" / "gullible"
 PORT = 8080  # the harness's gateway targets point here
-READ_TOOLS = ["read_file", "read_text_file", "read_media_file", "read_multiple_files", "list_directory",
-              "list_directory_with_sizes", "directory_tree", "search_files", "get_file_info", "list_allowed_directories"]
+READ_TOOLS = [
+    "read_file", "read_text_file", "read_media_file", "read_multiple_files", "list_directory",
+    "list_directory_with_sizes", "directory_tree", "search_files", "get_file_info", "list_allowed_directories",
+]  # fmt: skip
 WRITE_TOOLS = ["write_file", "edit_file", "create_directory", "move_file"]
 
 CONFIGURATIONS: dict[str, dict[str, Any]] = {
@@ -71,7 +74,7 @@ def wait_healthy(timeout_s: float = 60) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/healthz", timeout=2) as response:  # noqa: S310
+            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/healthz", timeout=2) as response:
                 if response.status == 200:
                     return
         except OSError:
@@ -84,25 +87,50 @@ def run(name: str) -> list[dict[str, Any]]:
     run_dir = OUT / name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "audit.jsonl").unlink(missing_ok=True)
-    config_path = run_dir / "gateway.yaml"
-    config_path.write_text(yaml.safe_dump(config_for(name, key), sort_keys=False))
-    gateway = subprocess.Popen(
+    # The gateway runs from a private copy with real paths; the committed copy
+    # names paths relative to the workspace, so no local home directory is
+    # published.
+    config_text = yaml.safe_dump(config_for(name, key), sort_keys=False)
+    config_path = Path(tempfile.mkdtemp(prefix="gullible-")) / "gateway.yaml"
+    config_path.write_text(config_text)
+    (run_dir / "gateway.yaml").write_text(config_text.replace(str(ROOT.parent) + "/", "<workspace>/"))
+    # Every subprocess here runs a fixed local command (this repo's gateway,
+    # the harness's script through uv), never input from outside.
+    gateway = subprocess.Popen(  # noqa: S603
         [str(ROOT / ".venv/bin/mcp-gateway"), "serve", "--config", str(config_path), "--port", str(PORT)],
         stderr=(run_dir / "gateway.stderr").open("w"),
     )
     try:
         wait_healthy()
-        result = subprocess.run(
-            ["uv", "run", "--directory", str(HARNESS), "python", "scripts/gullible_agent.py",
-             "--target", "filesystem-attacks-gateway", "--json", str(run_dir / "results.json")],
-            env={**os.environ, "MCP_GATEWAY_KEY": key}, capture_output=True, text=True, timeout=600, check=False,
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607 (uv on PATH, as the README's commands assume)
+                "uv",
+                "run",
+                "--directory",
+                str(HARNESS),
+                "python",
+                "scripts/gullible_agent.py",
+                "--target",
+                "filesystem-attacks-gateway",
+                "--json",
+                str(run_dir / "results.json"),
+            ],
+            env={**os.environ, "MCP_GATEWAY_KEY": key},
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
         )
         print(result.stdout.strip().splitlines()[-1] if result.stdout.strip() else result.stderr[-2000:])
     finally:
         gateway.terminate()
         gateway.wait(timeout=30)
-    verify = subprocess.run([str(ROOT / ".venv/bin/mcp-gateway"), "verify-log", str(run_dir / "audit.jsonl")],
-                            capture_output=True, text=True, check=False)
+    verify = subprocess.run(  # noqa: S603
+        [str(ROOT / ".venv/bin/mcp-gateway"), "verify-log", str(run_dir / "audit.jsonl")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     print(f"  audit log: {verify.stdout.strip().splitlines()[-1]}")
     return json.loads((run_dir / "results.json").read_text())
 
@@ -119,8 +147,11 @@ def main() -> int:
             "answered": sum(r["answered"] for r in rows),
             "tasks": len(rows),
             "per_task": {
-                r["task"]: {"attack_succeeded": r["attack_succeeded"], "attack_effect": r["attack_effect"],
-                            "answered": r["answered"]}
+                r["task"]: {
+                    "attack_succeeded": r["attack_succeeded"],
+                    "attack_effect": r["attack_effect"],
+                    "answered": r["answered"],
+                }
                 for r in rows
             },
         }
@@ -131,8 +162,10 @@ def main() -> int:
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     for name in CONFIGURATIONS:
         s = summary[name]
-        print(f"{name:12} attacks obeyed {s['attacks_succeeded']}/{s['tasks']}, with effect "
-              f"{s['attacks_with_effect']}/{s['tasks']}, questions answered {s['answered']}/{s['tasks']}")
+        print(
+            f"{name:12} attacks obeyed {s['attacks_succeeded']}/{s['tasks']}, with effect "
+            f"{s['attacks_with_effect']}/{s['tasks']}, questions answered {s['answered']}/{s['tasks']}"
+        )
     print("gateway-on matches the prediction" if not mismatches else f"MISMATCH with the prediction: {mismatches}")
     return 0 if not mismatches else 1
 

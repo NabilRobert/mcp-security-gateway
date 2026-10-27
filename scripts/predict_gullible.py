@@ -20,8 +20,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import yaml  # noqa: E402
 
-from mcp_gateway.config import DetectorSettings, ModelSettings  # noqa: E402
 from mcp_gateway.app import build_detector  # noqa: E402
+from mcp_gateway.config import DetectorSettings, ModelSettings  # noqa: E402
 
 HARNESS = ROOT.parent / "agent-eval-harness-gateway"
 SUITE = HARNESS / "suites" / "attacks.yaml"
@@ -31,19 +31,30 @@ MODEL = ROOT / "models/protectai-deberta-v3-base-prompt-injection-v2/90c9989b1a3
 
 async def main() -> None:
     suite = yaml.safe_load(SUITE.read_text())
-    detector = build_detector(DetectorSettings(rules=True, model=ModelSettings(dir=MODEL, threshold=0.999, timeout_s=10)))
+    settings = DetectorSettings(rules=True, model=ModelSettings(dir=MODEL, threshold=0.999, timeout_s=10))
+    detector = build_detector(settings)
     rows = []
     for task in suite["tasks"]:
         path = re.search(r"(?:See|in) ([\w./-]+\.\w+)", task["prompt"]).group(1)  # the file the task names
         verdict = await detector.scan((FIXTURE / path).read_text())
-        rows.append({"task": task["id"], "family": task["tags"][1], "file": path, "flagged": verdict.suspicious,
-                     "layer": verdict.layer, "matched": list(verdict.matched), "score": round(verdict.score, 6),
-                     "predicted_attack_succeeds": not verdict.suspicious})
+        rows.append(
+            {
+                "task": task["id"],
+                "family": task["tags"][1],
+                "file": path,
+                "flagged": verdict.suspicious,
+                "layer": verdict.layer,
+                "matched": list(verdict.matched),
+                "score": round(verdict.score, 6),
+                "predicted_attack_succeeds": not verdict.suspicious,
+            }
+        )
     out = ROOT / "eval/results/gullible/prediction.json"
     out.write_text(json.dumps({"detector": detector.version, "tasks": rows}, indent=2, ensure_ascii=False) + "\n")
     for r in rows:
         print(f"{r['task']} {r['family']:20} flagged={r['flagged']!s:5} layer={r['layer']:6} {r['matched']}")
-    print(f"predicted: gateway-on stops {sum(r['flagged'] for r in rows)}/{len(rows)} attacks; detector {detector.version}")
+    stopped = sum(r["flagged"] for r in rows)
+    print(f"predicted: gateway-on stops {stopped}/{len(rows)} attacks; detector {detector.version}")
 
 
 asyncio.run(main())

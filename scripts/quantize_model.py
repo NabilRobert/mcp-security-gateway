@@ -35,8 +35,10 @@ def main() -> int:
         per_channel=True,
     )
     for path in (SOURCE / "model.onnx", TARGET / "model.onnx"):
-        print(f"{path.relative_to(ROOT)}: {path.stat().st_size / 1e6:.0f} MB, "
-              f"sha256 {hashlib.sha256(path.read_bytes()).hexdigest()[:16]}")
+        print(
+            f"{path.relative_to(ROOT)}: {path.stat().st_size / 1e6:.0f} MB, "
+            f"sha256 {hashlib.sha256(path.read_bytes()).hexdigest()[:16]}"
+        )
     return 0
 
 
