@@ -369,3 +369,23 @@ description and schema only.
   variant passes, Arthur decides; the fallback is option (c), a lower
   window cap.
 
+**Result (2026-10-27): int8 FAILS the acceptance rule.**
+- **The working variant:** MatMul weights only, per channel. It is
+  539 MB, and a full window takes a median 555 ms, against 960 ms for fp32
+  in the same session: about 1.7× faster.
+- **Dev results**, with timeouts counted as blocks:
+
+  | Threshold | int8: FP | int8: recall | fp32: FP | fp32: recall | Timeouts, int8 / fp32 |
+  |---|---|---|---|---|---|
+  | 0.99 | 14.2% | 44.4% | 14.5% | 61.1% | 3 / 15 |
+  | 0.995 | 7.6% | 39.4% | 11.1% | 55.8% | 5 / 17 |
+  | 0.999 | 2.5% | 30.6% | 2.2% | 49.7% | 6 / 12 |
+
+- False positives stay within the 1-point margin at 0.99 and 0.999. But
+  recall drops by 16–19 points, far past the 5-point margin.
+- Rules plus model still reach 100% dev recall either way, because the
+  rules carry the dev set.
+- **The fp32 model stays.** The int8 copy is not adopted. Arthur's
+  preferred long-run option is Prompt Guard 2 22M, once its licence is
+  accepted (a reminder is in the handover).
+
