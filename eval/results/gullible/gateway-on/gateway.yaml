@@ -1,16 +1,16 @@
 upstreams:
   attack-files:
     transport: stdio
-    command: /Users/nabilrobert/Desktop/my-kerjaan-aku/mcp-gateway/.venv/bin/python
+    command: <workspace>/mcp-gateway/.venv/bin/python
     args:
     - -m
     - agent_eval.fs_server
-    - /Users/nabilrobert/Desktop/my-kerjaan-aku/agent-eval-harness-gateway/suites/fixtures/acme-shop-attacks
-    cwd: /Users/nabilrobert/Desktop/my-kerjaan-aku/agent-eval-harness-gateway
+    - <workspace>/agent-eval-harness-gateway/suites/fixtures/acme-shop-attacks
+    cwd: <workspace>/agent-eval-harness-gateway
     per_session: true
 callers:
   harness:
-    key_sha256: 42455e04e57e65eb99cdf10e9e6d8630e5903632e057f7d195799a9389313944
+    key_sha256: 2de19270facce43f58d8dc35e6b3a7dd4e3eeac404deb5ecf18d09746adbda93
     policy: measure
 policies:
   measure:
@@ -34,9 +34,9 @@ policies:
 detector:
   rules: true
   model:
-    dir: /Users/nabilrobert/Desktop/my-kerjaan-aku/mcp-gateway/models/protectai-deberta-v3-base-prompt-injection-v2/90c9989b1a342275dd0d1a95aad283c04e075671
+    dir: <workspace>/mcp-gateway/models/protectai-deberta-v3-base-prompt-injection-v2/90c9989b1a342275dd0d1a95aad283c04e075671
     threshold: 0.999
     timeout_s: 2.0
 audit:
-  path: /Users/nabilrobert/Desktop/my-kerjaan-aku/mcp-gateway/eval/results/gullible/gateway-on/audit.jsonl
+  path: <workspace>/mcp-gateway/eval/results/gullible/gateway-on/audit.jsonl
   fsync: true

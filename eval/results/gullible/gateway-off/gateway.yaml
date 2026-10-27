@@ -1,16 +1,16 @@
 upstreams:
   attack-files:
     transport: stdio
-    command: /Users/nabilrobert/Desktop/my-kerjaan-aku/mcp-gateway/.venv/bin/python
+    command: <workspace>/mcp-gateway/.venv/bin/python
     args:
     - -m
     - agent_eval.fs_server
-    - /Users/nabilrobert/Desktop/my-kerjaan-aku/agent-eval-harness-gateway/suites/fixtures/acme-shop-attacks
-    cwd: /Users/nabilrobert/Desktop/my-kerjaan-aku/agent-eval-harness-gateway
+    - <workspace>/agent-eval-harness-gateway/suites/fixtures/acme-shop-attacks
+    cwd: <workspace>/agent-eval-harness-gateway
     per_session: true
 callers:
   harness:
-    key_sha256: 366cf5bcd4a63e972e12c34ee6264d25ab2d812ad609d17f356958ddb7310f50
+    key_sha256: 0dca4007ea659006a14cfa13eff774fd6eeb01458ace84dc71d8f42b3d570050
     policy: measure
 policies:
   measure:
@@ -34,5 +34,5 @@ policies:
 detector:
   rules: false
 audit:
-  path: /Users/nabilrobert/Desktop/my-kerjaan-aku/mcp-gateway/eval/results/gullible/gateway-off/audit.jsonl
+  path: <workspace>/mcp-gateway/eval/results/gullible/gateway-off/audit.jsonl
   fsync: true
