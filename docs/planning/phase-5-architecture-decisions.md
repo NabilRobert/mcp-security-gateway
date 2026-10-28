@@ -364,8 +364,15 @@ the upstream answers, and every output costs a scan.
 - A refused call gets an error result, like a policy denial, and a
   `rate_limited` audit line. It is never forwarded.
 
-**Why `limits`:** it is the library behind SlowAPI and Flask-Limiter, with
-async storage and moving windows, so no hand-built counter.
+**Options considered:**
+- MCP-backbone's own limiter (`app/auth/rate_limit.py`): a fixed window
+  counted in Postgres, tied to its `Workspace` model. The gateway has no
+  database, so it can't be reused as it is.
+- SlowAPI: limits per HTTP endpoint, but every MCP call on a route is the
+  same endpoint, so it can't count tool calls or span routes.
+- **`limits` (chosen):** the library under SlowAPI and Flask-Limiter, with
+  async storage and moving windows. The gateway adds only the glue.
+- A hand-built counter: no reason to write one.
 
 **Consequence:** counts reset on restart and aren't shared between gateway
 processes. A Redis storage would fix both, with one more service to run.
