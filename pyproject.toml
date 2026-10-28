@@ -11,6 +11,8 @@ dependencies = [
     "mcp==2.3.0",
     "numpy==2.5.4",
     "onnxruntime==1.31.0",
+    "opentelemetry-exporter-otlp-proto-http==1.45.1",
+    "opentelemetry-sdk==1.45.1",
     "pydantic==2.14.1",
     "pyyaml==6.0.3",
     "starlette==1.10.0",

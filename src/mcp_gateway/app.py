@@ -34,6 +34,7 @@ from mcp_gateway.config import ConfigError, DetectorSettings, GatewayConfig, Htt
 from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDetector, StubDetector
 from mcp_gateway.proxy import Route
 from mcp_gateway.ratelimit import CallLimiter
+from mcp_gateway.tracing import configure_tracing, shutdown_tracing
 from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
@@ -208,6 +209,7 @@ async def serve(
     start-up is wrong."""
     detector = detector or build_detector(config.detector)
     audit = AuditLog(config.audit.path, fsync=config.audit.fsync)
+    tracing = configure_tracing()  # None unless OTEL_EXPORTER_OTLP_ENDPOINT is set
     try:
         await _serve(config, audit, detector, host=host, port=port, connect=connect, started=started)
     except BaseExceptionGroup as group:
@@ -219,6 +221,8 @@ async def serve(
         raise _first(found) from group
     finally:
         audit.close()
+        if tracing is not None:
+            await anyio.to_thread.run_sync(shutdown_tracing, tracing)
 
 
 def _leaf(exc: BaseException) -> BaseException:

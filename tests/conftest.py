@@ -12,10 +12,43 @@ import uvicorn
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server import MCPServer
+from opentelemetry import trace
 
 from mcp_gateway.app import serve
 from mcp_gateway.auth import key_sha256
 from mcp_gateway.config import GatewayConfig, HttpUpstream, StdioUpstream
+
+
+class SwitchableTracerProvider(trace.TracerProvider):
+    """Test-only. The global provider can be set once per process, and the
+    MCP SDK caches the tracer it gets, so tests switch tracing on and off
+    here instead: off (no-op, as in production without an endpoint) unless
+    a test sets `active`."""
+
+    def __init__(self) -> None:
+        self.active: trace.TracerProvider | None = None
+
+    def get_tracer(self, *args: Any, **kwargs: Any) -> trace.Tracer:
+        return _SwitchTracer(self, args, kwargs)
+
+
+class _SwitchTracer(trace.Tracer):
+    def __init__(self, switch: SwitchableTracerProvider, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        self._switch, self._args, self._kwargs = switch, args, kwargs
+
+    def _tracer(self) -> trace.Tracer:
+        active = self._switch.active
+        return trace.NoOpTracer() if active is None else active.get_tracer(*self._args, **self._kwargs)
+
+    def start_span(self, *args: Any, **kwargs: Any) -> trace.Span:
+        return self._tracer().start_span(*args, **kwargs)
+
+    def start_as_current_span(self, *args: Any, **kwargs: Any) -> Any:
+        return self._tracer().start_as_current_span(*args, **kwargs)
+
+
+TRACING = SwitchableTracerProvider()
+trace.set_tracer_provider(TRACING)
 
 KEY_A = "test-key-alpha-0123456789abcdefghijklmnop"
 KEY_B = "test-key-bravo-0123456789abcdefghijklmnop"

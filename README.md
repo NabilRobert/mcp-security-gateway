@@ -17,6 +17,7 @@ filters out.
 | Upstreams | HTTP or stdio; the gateway holds each server's own credential, so an agent's key opens only the gateway. Stateful stdio servers get one process per MCP session. A call's `_meta` (an app's delegation token, trace context) is forwarded unchanged, with the authenticated caller stamped in as `io.github.nabilrobert.mcp-gateway/caller` |
 | Detection | Every tool output (text and structured content) is read by pattern rules, then a local classifier (ProtectAI's DeBERTa prompt-injection model, ONNX on CPU). A flagged output is blocked (default), annotated, or logged. Tool descriptions are scanned too: a flagged tool is hidden and its calls refused |
 | Audit | Append-only JSONL with a hash chain, a line written *before* each call is forwarded; `mcp-gateway verify-log`. It records whether a call carried `_meta`, never what it held |
+| Tracing | Optional OpenTelemetry traces (OTLP/HTTP): one span per stage of a call under the MCP SDK's own, so an agent's trace runs through the gateway into the upstream. Outcomes and timings only, never arguments or outputs |
 
 It fails closed: a detector error or timeout, content it can't scan, or an
 audit log it can't write all block the call.
@@ -134,6 +135,21 @@ The model layer needs the classifier on disk. It's a 739 MB download from
 Hugging Face (`protectai/deberta-v3-base-prompt-injection-v2`, revision
 `90c9989b1a34`). Without it, set `detector.model` to null and the rules
 run alone.
+
+Tracing is off unless an OTLP endpoint is set, for example a local Jaeger:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 uv run mcp-gateway serve --config gateway.yaml
+```
+
+Each `tools/call` span gets the stages `rate_limit`, `policy`, `audit`,
+`forward`, `detect` and `audit` as children, with `error.type` on the
+stage that refused or blocked the call (`rate_limited`, `denied`,
+`tool_hidden`, `blocked_suspicious`, `blocked_unscanned`,
+`detector_failed`). The call span carries the caller, the route, the
+decision and the `call_id`, which matches the audit log. The service name
+is `mcp-security-gateway` unless `OTEL_SERVICE_NAME` says otherwise. A dead viewer
+only loses spans, and a stop waits at most 2 s for it.
 
 ## Design
 
