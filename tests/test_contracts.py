@@ -155,6 +155,13 @@ async def test_a_refused_key_line_records_where_it_came_from(gateway: RunningGat
 
 
 class BrokenSession:
+    """Lists its tools, then fails every call."""
+
+    async def list_tools(self, params: Any = None) -> Any:  # noqa: ARG002
+        from mcp.types import ListToolsResult, Tool
+
+        return ListToolsResult(tools=[Tool(name="echo", description="Echo the text back.", input_schema={})])
+
     async def call_tool(self, name: str, arguments: dict[str, Any], meta: Any = None) -> Any:  # noqa: ARG002
         raise ConnectionError("upstream went away")
 
@@ -184,6 +191,30 @@ async def test_an_upstream_failure_is_an_upstream_error(tmp_path: Path) -> None:
     result = [line for line in lines(route.audit.path) if line["kind"] == "result"][-1]
     assert result["decision"] == "upstream_error" and result["error"] == "ConnectionError"
     assert result["call_id"] and result["caller"] == "alpha" and result["tool"] == "echo"
+
+
+class UnlistableClient:
+    """Fails to list its tools, so a call can't be screened (ADR-011)."""
+
+    class session:
+        calls = 0
+
+        @staticmethod
+        async def list_tools(params: Any = None) -> Any:  # noqa: ARG004
+            raise ConnectionError("upstream went away")
+
+        @classmethod
+        async def call_tool(cls, name: str, arguments: dict[str, Any], meta: Any = None) -> Any:  # noqa: ARG003
+            cls.calls += 1
+
+
+async def test_a_tool_that_cant_be_screened_is_an_upstream_error_and_not_forwarded(tmp_path: Path) -> None:
+    route = route_with(tmp_path, UnlistableClient())
+    with pytest.raises(MCPError) as raised:
+        await route._call_tool(ctx(), CallToolRequestParams(name="echo", arguments={"text": "x"}))  # pyright: ignore[reportPrivateUsage]
+    assert raised.value.error.code == UPSTREAM_ERROR and UnlistableClient.session.calls == 0
+    call = [line for line in lines(route.audit.path) if line["kind"] == "call"][-1]
+    assert call["decision"] == "upstream_error" and call["error"] == "ConnectionError" and call["tool"] == "echo"
 
 
 async def test_an_unwritable_log_refuses_with_an_internal_error_on_stderr(

@@ -207,7 +207,11 @@ class TooSlow:
 
 @pytest.mark.parametrize("detector", [Exploding(), TooSlow()], ids=["crash", "timeout"])
 async def test_a_failing_detector_fails_closed(tmp_path: Path, detector: Any) -> None:
-    result, line = await call(config(tmp_path), "clean", detector=detector)
+    """Output scanning; tool definitions are off here (they fail closed too,
+    which test_tool_descriptions covers)."""
+    cfg = config(tmp_path)
+    cfg = cfg.model_copy(update={"detector": cfg.detector.model_copy(update={"scan_tool_descriptions": False})})
+    result, line = await call(cfg, "clean", detector=detector)
     assert result.is_error and "detector failed" in text(result)
     assert line["decision"] == "gateway_error"
 

@@ -1,0 +1,14 @@
+{
+  "detector": "rules + model (fp32, threshold 0.999, 2 s timeout)",
+  "pagila": {
+    "allowed": 4,
+    "shown": 4,
+    "hidden": []
+  },
+  "files": {
+    "allowed": 14,
+    "shown": 14,
+    "hidden": []
+  },
+  "tool_flagged": []
+}

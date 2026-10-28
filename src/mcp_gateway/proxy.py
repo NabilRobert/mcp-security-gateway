@@ -29,6 +29,7 @@ from mcp.types import (
     PaginatedRequestParams,
     RequestParamsMeta,
     TextContent,
+    Tool,
 )
 from mcp_types.jsonrpc import INTERNAL_ERROR, INVALID_REQUEST
 
@@ -36,7 +37,7 @@ from mcp_gateway.audit import AuditError, AuditLog
 from mcp_gateway.auth import CallerUser
 from mcp_gateway.config import GatewayConfig
 from mcp_gateway.detect import Detector, string_leaves
-from mcp_gateway.policy import allowed_tools, check_call
+from mcp_gateway.policy import Verdict, allowed_tools, check_call
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams
 
@@ -85,6 +86,27 @@ def session_id_of(ctx: ServerRequestContext[Any, Any]) -> str | None:
     headers = getattr(request, "headers", None)
     value = headers.get(MCP_SESSION_ID_HEADER) if headers is not None else None
     return value if isinstance(value, str) and value else None
+
+
+def tool_text(tool: Tool) -> str:
+    """What a model reads of a tool definition: its title, description, and
+    every description inside its input schema."""
+    parts = [tool.title or "", tool.description or "", *schema_descriptions(tool.input_schema)]
+    return "\n".join(p for p in parts if p)
+
+
+def schema_descriptions(schema: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(schema, dict):
+        for key, value in cast(dict[str, Any], schema).items():
+            if key == "description" and isinstance(value, str):
+                found.append(value)
+            else:
+                found.extend(schema_descriptions(value))
+    elif isinstance(schema, list):
+        for value in cast(list[Any], schema):
+            found.extend(schema_descriptions(value))
+    return found
 
 
 def text_of(result: CallToolResult) -> str:
@@ -160,6 +182,8 @@ class Route:
         # by its Mcp-Session-Id: the SDK builds a new session object for every
         # request, so object identity would bind nothing.
         self._session_callers: dict[str, tuple[str, float]] = {}
+        # Tool name -> (hash of its definition text, flagged?)
+        self._tool_verdicts: dict[str, tuple[str, bool]] = {}
 
     def server(self) -> Server:
         return Server(f"mcp-gateway/{self.name}", on_list_tools=self._list_tools, on_call_tool=self._call_tool)
@@ -200,7 +224,39 @@ class Route:
         allowed = allowed_tools(self.config.policy_for(caller), self.name)
         upstream = await self.upstreams.for_session(session_id_of(ctx))
         result = await upstream.session.list_tools(params=params)
-        return result.model_copy(update={"tools": [t for t in result.tools if t.name in allowed]})
+        tools = [t for t in result.tools if t.name in allowed]
+        flagged = await self._screen_tools(tools)
+        return result.model_copy(update={"tools": [t for t in tools if t.name not in flagged]})
+
+    async def _screen_tools(self, tools: list[Tool]) -> set[str]:
+        """Tools whose definition text the detector flags. A definition is
+        scanned once per version of its text; a flag is audited when first
+        seen. A detector failure hides the tool without caching it."""
+        if not self.config.detector.scan_tool_descriptions:
+            return set()
+        flagged: set[str] = set()
+        for tool in tools:
+            text = tool_text(tool)
+            digest = hashlib.sha256(text.encode()).hexdigest()
+            cached = self._tool_verdicts.get(tool.name)
+            if cached is None or cached[0] != digest:
+                try:
+                    verdict = await self.detector.scan(text)
+                except Exception as exc:  # fail closed: hidden for now, not cached, so the next listing retries
+                    reason = f"detector failed: {type(exc).__name__}"
+                    self._try_append(
+                        "tool_flagged", route=self.name, tool=tool.name, definition_sha256=digest, reason=reason
+                    )
+                    flagged.add(tool.name)
+                    continue
+                cached = (digest, verdict.suspicious)
+                self._tool_verdicts[tool.name] = cached
+                if verdict.suspicious:
+                    why = {"layer": verdict.layer, "matched": list(verdict.matched)}
+                    self._try_append("tool_flagged", route=self.name, tool=tool.name, definition_sha256=digest, **why)
+            if cached[1]:
+                flagged.add(tool.name)
+        return flagged
 
     async def _call_tool(self, ctx: ServerRequestContext[Any, Any], params: CallToolRequestParams) -> CallToolResult:
         caller = self._caller(ctx)
@@ -231,6 +287,17 @@ class Route:
                 is_error=True,
             )
         verdict = check_call(self.config.policy_for(caller), self.name, params.name, arguments)
+        if verdict.allowed:
+            try:
+                flagged = await self._tool_is_flagged(ctx, params.name)
+            except MCPError as exc:  # e.g. a per-session route asked for without a session
+                self._try_append("call", decision="upstream_error", error=exc.error.message, **record)
+                raise
+            except Exception as exc:  # couldn't list the upstream's tools to screen this one
+                self._try_append("call", decision="upstream_error", error=type(exc).__name__, **record)
+                raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
+            if flagged:
+                verdict = Verdict(False, f"tool {params.name!r} hidden: its description looks like an injection")
         if not verdict.allowed:
             self._try_append("call", decision="denied", reason=verdict.reason, **record)
             return CallToolResult(
@@ -296,6 +363,18 @@ class Route:
             print(f"mcp-gateway: {exc}; output withheld", file=sys.stderr)
             raise MCPError(INTERNAL_ERROR, "the gateway can't write its audit log, so the output was withheld") from exc
         return returned
+
+    async def _tool_is_flagged(self, ctx: ServerRequestContext[Any, Any], name: str) -> bool:
+        """For a call: refuse a flagged tool even if the agent never listed
+        tools. Unscreened tools are screened on the spot."""
+        if not self.config.detector.scan_tool_descriptions:
+            return False
+        cached = self._tool_verdicts.get(name)
+        if cached is not None:
+            return cached[1]
+        upstream = await self.upstreams.for_session(session_id_of(ctx))
+        listed = await upstream.session.list_tools()
+        return name in await self._screen_tools([t for t in listed.tools if t.name == name])
 
     def _try_append(self, kind: str, **fields: Any) -> None:
         """For lines whose failure can't make things less safe (the call is
