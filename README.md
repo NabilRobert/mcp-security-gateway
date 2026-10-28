@@ -151,7 +151,7 @@ stage that refused or blocked the call (`rate_limited`, `denied`,
 `detector_failed`). The call span carries the caller, the route, the
 decision and the `call_id`, which matches the audit log. The service name
 is `mcp-security-gateway` unless `OTEL_SERVICE_NAME` says otherwise. A dead viewer
-only loses spans, and a stop waits at most 2 s for it.
+only loses spans, and a stop (Ctrl-C or SIGTERM) waits at most 2 s for it.
 
 ## Layout
 
