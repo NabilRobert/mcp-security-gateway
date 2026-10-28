@@ -5,6 +5,10 @@
 forwarded through the upstream's client session and audited again. A
 refused call never reaches the upstream, and no call is forwarded without
 its `call` line on disk.
+
+A call's `_meta` is forwarded unchanged (an app's delegation token, W3C
+trace context), with the authenticated caller stamped into it. The gateway
+neither reads nor logs what else `_meta` holds.
 """
 
 import hashlib
@@ -12,6 +16,7 @@ import re
 import sys
 import time
 import uuid
+from collections.abc import Mapping
 from typing import Any, cast
 
 from mcp.server import Server, ServerRequestContext
@@ -22,6 +27,7 @@ from mcp.types import (
     CallToolResult,
     ListToolsResult,
     PaginatedRequestParams,
+    RequestParamsMeta,
     TextContent,
 )
 from mcp_types.jsonrpc import INTERNAL_ERROR, INVALID_REQUEST
@@ -38,6 +44,20 @@ UPSTREAM_ERROR = -32001  # the gateway's own code: the upstream failed, not the 
 SECRET_NAME = re.compile(r"key|token|password|passwd|secret|authorization|credential|cookie", re.IGNORECASE)
 REDACTED = "<redacted>"
 
+# The authenticated caller's id, stamped into every forwarded call's `_meta`,
+# so an upstream can check that a delegation chain's acting agent is the key
+# that made the call (Juku's ADR-018, spike 6). Whatever a client sends under
+# this key is overwritten: a client can't claim to be another caller.
+CALLER_META_KEY = "io.github.nabilrobert.mcp-gateway/caller"
+# `_meta` keys that belong to the agent's connection, not to the call, so they
+# stay on that hop. The SDK sets its own `io.modelcontextprotocol/*` keys on
+# the upstream connection. A progress token names a request on the agent's
+# connection; one upstream connection carries many agents' calls, where two
+# agents' tokens could clash, and the gateway doesn't relay progress anyway.
+PROTOCOL_META_PREFIX = "io.modelcontextprotocol/"
+# The SDK's name for the wire's `progressToken` once it has parsed `_meta`.
+PROGRESS_TOKEN_META_KEY = "progress_token"  # noqa: S105 (a key name, not a secret)
+
 
 def redact(value: Any) -> Any:
     """Arguments as logged: any field, at any depth, whose name looks like a
@@ -48,6 +68,16 @@ def redact(value: Any) -> Any:
     if isinstance(value, list):
         return [redact(v) for v in cast(list[Any], value)]
     return value
+
+
+def end_to_end_meta(meta: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The client's `_meta`, in its order, minus the keys of its own connection."""
+    kept: dict[str, Any] = {}
+    for key, value in (meta or {}).items():
+        if key.startswith(PROTOCOL_META_PREFIX) or key == PROGRESS_TOKEN_META_KEY:
+            continue
+        kept[key] = value
+    return kept
 
 
 def session_id_of(ctx: ServerRequestContext[Any, Any]) -> str | None:
@@ -175,12 +205,18 @@ class Route:
     async def _call_tool(self, ctx: ServerRequestContext[Any, Any], params: CallToolRequestParams) -> CallToolResult:
         caller = self._caller(ctx)
         arguments = dict(params.arguments or {})
+        client_meta = end_to_end_meta(params.meta)
+        claimed_caller = client_meta.get(CALLER_META_KEY, caller)
+        forwarded_meta = {**client_meta, CALLER_META_KEY: caller}
         record: dict[str, Any] = {
             "call_id": uuid.uuid4().hex,
             "caller": caller,
             "route": self.name,
             "tool": params.name,
             "arguments": redact(arguments),
+            # Only that `_meta` came, never what it held: it can carry tokens.
+            "has_meta": bool(client_meta),
+            "is_caller_claim_overwritten": claimed_caller != caller,
             "policy_sha256": self.policy_hash,
         }
         limit = await self.limiter.take(caller)
@@ -210,7 +246,9 @@ class Route:
         start = time.perf_counter()
         try:
             upstream = await self.upstreams.for_session(session_id_of(ctx))
-            result = await upstream.session.call_tool(params.name, arguments)
+            result = await upstream.session.call_tool(
+                params.name, arguments, meta=cast(RequestParamsMeta, forwarded_meta)
+            )
         except MCPError as exc:  # e.g. a per-session route asked for without a session
             self._try_append("result", decision="upstream_error", error=exc.error.message, **_ids(record))
             raise
