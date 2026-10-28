@@ -24,7 +24,7 @@ audit log it can't write all block the call.
 
 It is deliberately small, so it can be read and checked. For production use,
 look at IBM ContextForge, Docker's MCP Gateway, Microsoft's MCP Gateway or
-Enkrypt's Secure MCP Gateway ([ADR-001](docs/planning/phase-5-architecture-decisions.md)).
+Enkrypt's Secure MCP Gateway ([ADR-001](docs/adr/adr-001-build-small-gateway.md)).
 
 Part of a portfolio, with
 [MCP-backbone](https://github.com/NabilRobert/MCP-backbone) (the database
