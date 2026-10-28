@@ -39,12 +39,10 @@ servers.
 | 10 | The agent getting the upstream's credential | The gateway holds each upstream's key; the agent's key opens only the gateway | Test: a recording fake upstream sees only its own key | — |
 | 11 | One agent's actions leaking into another's run | Per-session upstream processes for stateful stdio servers | Tests, including with the harness's own launcher: a write in one session is absent in the next | Shared (HTTP) upstreams are shared by design |
 | 12 | Unaudited calls | The `call` line is written before forwarding; if it can't be written, the call is refused | Test: with the log unwritable, the call is refused and the upstream never called | — |
+| 13 | Poisoned tool descriptions from a malicious upstream | Tool definitions are untrusted too: each tool's title, description and parameter descriptions go through the same detector when tools are listed. A flagged tool is hidden, and calls to it are refused even if the agent never listed tools. A detector failure hides the tool (fail closed); a changed definition is scanned again | Tests: a flagged tool is hidden and its call refused without listing; a failing detector hides it; a changed description is rescanned. The real upstreams' 18 tools all pass with rules + model on (`eval/results/tool-descriptions/`) | The detector's recall was measured on outputs, not descriptions, so it will miss phrasings it misses there. Tool and parameter *names* aren't scanned. An upstream can still lie about what a tool does without injecting instructions |
 
 ## Not defended in v1
 
-- **Poisoned tool descriptions** from a malicious upstream server. Tool
-  definitions pass through unchanged. Scanning them was planned as a
-  *should* and cut.
 - **Denial of service.** There is no rate limit per key. Large outputs cost
   CPU, bounded by the window cap and the timeout.
 - **Resources, prompts, sampling and elicitation.** The gateway proxies
