@@ -162,7 +162,7 @@ class BrokenSession:
 
         return ListToolsResult(tools=[Tool(name="echo", description="Echo the text back.", input_schema={})])
 
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:  # noqa: ARG002
+    async def call_tool(self, name: str, arguments: dict[str, Any], meta: Any = None) -> Any:  # noqa: ARG002
         raise ConnectionError("upstream went away")
 
 
@@ -204,7 +204,7 @@ class UnlistableClient:
             raise ConnectionError("upstream went away")
 
         @classmethod
-        async def call_tool(cls, name: str, arguments: dict[str, Any]) -> Any:  # noqa: ARG003
+        async def call_tool(cls, name: str, arguments: dict[str, Any], meta: Any = None) -> Any:  # noqa: ARG003
             cls.calls += 1
 
 
