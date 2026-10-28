@@ -14,9 +14,9 @@ filters out.
 |---|---|
 | Auth | Bearer API keys, stored as SHA-256 hashes, checked before any MCP session exists (Starlette's auth middleware). An optional call limit per key (`rate_limit`, on the `limits` library) |
 | Policy | Per caller and route: allowed tools (deny by default), argument rules (path prefixes with `..` resolved, full-match patterns) |
-| Upstreams | HTTP or stdio; the gateway holds each server's own credential, so an agent's key opens only the gateway. Stateful stdio servers get one process per MCP session |
+| Upstreams | HTTP or stdio; the gateway holds each server's own credential, so an agent's key opens only the gateway. Stateful stdio servers get one process per MCP session. A call's `_meta` (an app's delegation token, trace context) is forwarded unchanged, with the authenticated caller stamped in as `io.github.nabilrobert.mcp-gateway/caller` |
 | Detection | Every tool output (text and structured content) is read by pattern rules, then a local classifier (ProtectAI's DeBERTa prompt-injection model, ONNX on CPU). A flagged output is blocked (default), annotated, or logged |
-| Audit | Append-only JSONL with a hash chain, a line written *before* each call is forwarded; `mcp-gateway verify-log` |
+| Audit | Append-only JSONL with a hash chain, a line written *before* each call is forwarded; `mcp-gateway verify-log`. It records whether a call carried `_meta`, never what it held |
 
 It fails closed: a detector error or timeout, content it can't scan, or an
 audit log it can't write all block the call.

@@ -18,7 +18,7 @@ servers.
 | Party | Trusted to | Not trusted to |
 |---|---|---|
 | Gateway host and its operator | Run the gateway, hold the config and keys | — (a compromised host is out of scope) |
-| Caller (holder of a gateway key) | Act within its policy | Stay within its policy unaided |
+| Caller (holder of a gateway key) | Act within its policy | Stay within its policy unaided, or say truthfully who it is in `_meta` |
 | The agent's model | — | Ignore instructions it reads in tool outputs |
 | Upstream server | Execute calls correctly | Return outputs that are safe to show a model |
 | Whoever can write into data the tools read (a database row, a file) | — | Anything. This is the injection attacker |
@@ -28,7 +28,7 @@ servers.
 | # | Threat | Mitigation | Evidence | Residual risk |
 |---|---|---|---|---|
 | 1 | Calls without a valid key | Bearer API keys, checked before any MCP session exists (Starlette's auth middleware) | Tests: no key, a wrong key, a non-Bearer scheme and an empty key each get 401, and the upstream is never called | A stolen key works until it is removed from the config. There is no expiry and no rotation tooling |
-| 2 | Keys exposed through config or logs | Only SHA-256 hashes stored; keys compared in constant time; secret-like arguments redacted at any depth | Tests: no key appears in the audit log, stdout or stderr; nested secret fields are redacted | Redaction is by field name; a secret passed under an innocent name is logged |
+| 2 | Keys exposed through config or logs | Only SHA-256 hashes stored; keys compared in constant time; secret-like arguments redacted at any depth; a call's `_meta` (which can carry an app's tokens) is never logged, only whether it came | Tests: no key appears in the audit log, stdout or stderr; nested secret fields are redacted; no `_meta` value reaches the audit log | Redaction is by field name; a secret passed under an innocent name is logged |
 | 3 | Over-privileged agents | Per-caller, per-route tool allow-lists, deny by default; tools not allowed are hidden from `tools/list` | Tests: a denied tool is refused and never forwarded (call-counting fake upstream) | Policies are only as tight as the operator writes them |
 | 4 | Path tricks in arguments | Prefix rules resolve `.` and `..` first; absolute and relative never match; NUL bytes and backslashes refused | 16 table-driven path tests | Symlinks are not resolved; the upstream's own confinement still applies |
 | 5 | One caller using another's session | A session is bound to the caller that first used it, by `Mcp-Session-Id` | A real HTTP test: a second key on the first key's session is refused | — |
@@ -40,6 +40,7 @@ servers.
 | 11 | One agent's actions leaking into another's run | Per-session upstream processes for stateful stdio servers | Tests, including with the harness's own launcher: a write in one session is absent in the next | Shared (HTTP) upstreams are shared by design |
 | 12 | Unaudited calls | The `call` line is written before forwarding; if it can't be written, the call is refused | Test: with the log unwritable, the call is refused and the upstream never called | — |
 | 14 | One key flooding the gateway with calls | An optional limit per key on tool calls, across all routes (`rate_limit`, moving window, the `limits` library). Counted before policy, so denied calls count too; a refused call gets an error result and a `rate_limited` audit line | Tests: past the limit a call is refused and never forwarded; one key's limit doesn't touch another's; a call refused by one window doesn't use up another | Counts are in memory: a restart resets them, and two gateway processes count separately. `tools/list` and failed logins aren't counted. Large outputs still cost CPU, bounded by the window cap and the timeout |
+| 15 | An agent telling an upstream it is another agent (for example, to use another agent's delegation chain) | The gateway stamps the caller it authenticated into each call's `_meta` (`io.github.nabilrobert.mcp-gateway/caller`), overwriting any value the client sent; the audit line flags an overwritten claim. The rest of `_meta` is forwarded unchanged and never read: an app's delegation token is audience-bound to its own server, not the gateway's credential, so this isn't token passthrough | Tests over stdio and HTTP upstreams: a client-sent caller is replaced by the real one; `_meta` arrives unchanged otherwise | The stamp proves who called only if the upstream is reachable *only* through the gateway. The upstream must check the stamp; the gateway doesn't validate tokens in `_meta` |
 
 ## Not defended in v1
 
