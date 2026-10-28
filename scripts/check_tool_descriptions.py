@@ -24,9 +24,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT / "spikes"))
 import measure_overhead as mo  # noqa: E402  (gateway config and runner)
-import s1_transparency as s1  # noqa: E402
+import recorded_calls as s1  # noqa: E402
 
 OUT = ROOT / "eval" / "results" / "tool-descriptions"
 

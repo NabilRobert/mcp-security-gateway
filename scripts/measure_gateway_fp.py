@@ -31,9 +31,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
-sys.path.insert(0, str(ROOT / "spikes"))
 import measure_overhead as mo  # noqa: E402  (gateway config and runner)
-import s1_transparency as s1  # noqa: E402
+import recorded_calls as s1  # noqa: E402
 
 from mcp_gateway.eval.split import benign_split  # noqa: E402
 from mcp_gateway.proxy import text_of  # noqa: E402

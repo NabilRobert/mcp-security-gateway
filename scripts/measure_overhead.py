@@ -37,9 +37,9 @@ import yaml
 from mcp import Client, StdioServerParameters
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "spikes"))
-import s1_transparency as s1  # noqa: E402  (recorded calls, local key, clients)
-import s5_replay as s5  # noqa: E402  (rebasing recorded fixture paths)
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_benign_set as s5  # noqa: E402  (rebasing recorded fixture paths)
+import recorded_calls as s1  # noqa: E402  (recorded calls, local key, clients)
 
 MODEL = ROOT / "models/protectai-deberta-v3-base-prompt-injection-v2/90c9989b1a342275dd0d1a95aad283c04e075671"
 OUT = ROOT / "eval" / "results" / "overhead"

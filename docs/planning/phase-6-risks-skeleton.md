@@ -91,11 +91,17 @@ evaluation and the measurement.
 
 ## Spike results
 
+The spike code was removed from main once these results were recorded
+(2026-10-29). Each link below points to it as it was, at `ffc78c6`. Two
+parts live on in `scripts/`: Spike 1's replay helpers
+(`scripts/recorded_calls.py`) and Spike 5's benign-set builder
+(`scripts/build_benign_set.py`).
+
 *(Filled in as the spikes run.)*
 
 ### Spike 1 result: PASS — the proxy is transparent at the same protocol version (2026-10-26)
 
-`spikes/s1_transparency.py`: a low-level `Server` route per upstream,
+[`spikes/s1_transparency.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s1_transparency.py): a low-level `Server` route per upstream,
 forwarding through an SDK client session, behind a bare ASGI Bearer check.
 It was run against the local MCP-backbone (repro stack) and the pinned
 filesystem server, replaying 60 distinct recorded tool calls per upstream
@@ -128,7 +134,7 @@ from the harness's runs. No model calls.
 
 ### Spike 5 result: PASS — the benign set builds from recorded runs at $0 (2026-10-26)
 
-`spikes/s5_replay.py` replays every distinct recorded tool call from the
+[`spikes/s5_replay.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s5_replay.py) (now [`scripts/build_benign_set.py`](../../scripts/build_benign_set.py)) replays every distinct recorded tool call from the
 harness's runs, direct to the local MCP-backbone and the pinned filesystem
 server, and writes the outputs to `eval/benign/outputs.jsonl`
 (1,982 outputs, 1.2 MB). No model calls.
@@ -158,7 +164,7 @@ server, and writes the outputs to `eval/benign/outputs.jsonl`
 
 ### Spikes 3 and 4, first run (2026-10-26): Spike 3 FAIL, Spike 4 KILL as drafted
 
-`spikes/s34_model.py`, ProtectAI v2 (ONNX, revision `90c9989b1a34`), Apple
+[`spikes/s34_model.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s34_model.py), ProtectAI v2 (ONNX, revision `90c9989b1a34`), Apple
 M2 CPU. 1,977 benign outputs; 540 dev injections (6 dev families × 3
 templates × 30 benign hosts, planted at the start, middle or end). The test
 families were not loaded.
@@ -247,8 +253,8 @@ realistically. Raw and Variant B were scored on identical samples.
 
 ### Spike 2 result: PASS — the harness runs through the gateway with only the target changed (2026-10-26)
 
-`spikes/s2_harness.py`, run with the harness's venv. It starts the Spike 1
-proxy (`spikes/s2_serve.py`) and calls the harness's own `build_task` with a
+[`spikes/s2_harness.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s2_harness.py), run with the harness's venv. It starts the Spike 1
+proxy ([`spikes/s2_serve.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s2_serve.py)) and calls the harness's own `build_task` with a
 target dict pointing at the gateway URL. The model is Inspect's `mockllm`
 ($0), and the harness repo is not modified.
 
@@ -272,7 +278,7 @@ filesystem server on a fresh copy**, as the harness's stdio target does.
 
 ### Spike 6 result: PASS — the audit log costs microseconds (2026-10-26)
 
-`spikes/s6_audit.py`: 1,000 forwarded calls, each a `call` and a `result`
+[`spikes/s6_audit.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s6_audit.py): 1,000 forwarded calls, each a `call` and a `result`
 line with the hash chain.
 
 | Mode | p50 | p95 | Max |
@@ -326,7 +332,7 @@ still hold?
 
 ### Spike 7 result: FAIL on criterion 1 only — FastMCP changes every tool definition (2026-10-27)
 
-`spikes/s7_fastmcp.py`, in a separate venv (`.venv-spike7`: FastMCP 4.1.4
+[`spikes/s7_fastmcp.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/spikes/s7_fastmcp.py), in a separate venv (`.venv-spike7`: FastMCP 4.1.4
 on `mcp` 2.3.0). It ran Spike 1's replay through `create_proxy` routes, with
 a `TokenVerifier` subclass doing our hashed key check and a policy
 middleware.
@@ -370,7 +376,9 @@ description and schema only.
   window cap.
 
 **Result (2026-10-27): int8 FAILS the acceptance rule.**
-- **The working variant:** MatMul weights only, per channel. It is
+- **The working variant:** MatMul weights only, per channel, made with
+  [`scripts/quantize_model.py`](https://github.com/NabilRobert/mcp-security-gateway/blob/ffc78c6/scripts/quantize_model.py)
+  (removed from main with the spikes). It is
   539 MB, and a full window takes a median 555 ms, against 960 ms for fp32
   in the same session: about 1.7× faster.
 - **Dev results**, with timeouts counted as blocks:
