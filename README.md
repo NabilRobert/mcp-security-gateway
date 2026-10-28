@@ -20,7 +20,9 @@ filters out.
 | Tracing | Optional OpenTelemetry traces (OTLP/HTTP): one span per stage of a call under the MCP SDK's own, so an agent's trace runs through the gateway into the upstream. Outcomes and timings only, never arguments or outputs |
 
 It fails closed: a detector error or timeout, content it can't scan, or an
-audit log it can't write all block the call.
+audit log it can't write all block the call. What it defends against, the
+evidence for each claim, and what it doesn't defend against are in the
+[threat model](THREAT_MODEL.md).
 
 It is deliberately small, so it can be read and checked. For production use,
 look at IBM ContextForge, Docker's MCP Gateway, Microsoft's MCP Gateway or
@@ -151,14 +153,32 @@ decision and the `call_id`, which matches the audit log. The service name
 is `mcp-security-gateway` unless `OTEL_SERVICE_NAME` says otherwise. A dead viewer
 only loses spans, and a stop waits at most 2 s for it.
 
-## Design
+## Layout
+
+| Path | What's there |
+|---|---|
+| `src/mcp_gateway/` | The gateway: `config`, `auth`, `policy`, `ratelimit`, `proxy`, `upstreams`, `detect`, `audit`, `tracing`, `app`, `cli`; `rules/` holds the detector's patterns, and `eval/` scores the detector offline |
+| `tests/` | The test suite (no network and no model unless asked for) |
+| `eval/` | The labelled set (`benign/`, `injections/`) and every published result (`results/`) |
+| `scripts/` | The measurements behind the numbers above, and the builder of the benign set |
+| `examples/` | A sample config |
+| `docs/` | The ADRs, the planning trail, the journey and the mutation-testing triage |
+
+## Docs
 
 - [Threat model](THREAT_MODEL.md): what it defends against, the evidence,
   and what it doesn't defend against.
-- [Planning trail](docs/planning/README.md): seven phases, written before
-  the code, including the ADRs and the spike results.
+- [Architecture decisions](docs/adr/README.md): the components, the stack,
+  and one file per ADR.
+- [Planning trail](docs/planning/README.md): the phases, written before the
+  code, and the spike results.
 - [Journey](docs/journey.md): what the spikes found, the bugs the tests caught,
   and what was reversed.
+- [Mutation testing](docs/mutation-testing.md): the full mutmut run and its
+  triage.
+- Results, each with its method: [gullible agent](eval/results/gullible/README.md),
+  [overhead](eval/results/overhead/README.md),
+  [false positives through the gateway](eval/results/gateway-fp/README.md).
 
 Built on the MCP Python SDK's low-level `Server` (ADR-002), with FastAPI,
 Starlette's auth, Pydantic, Typer and onnxruntime. FastMCP's proxy was
