@@ -32,6 +32,7 @@ from mcp.types import (
     Tool,
 )
 from mcp_types.jsonrpc import INTERNAL_ERROR, INVALID_REQUEST
+from opentelemetry import trace
 
 from mcp_gateway.audit import AuditError, AuditLog
 from mcp_gateway.auth import CallerUser
@@ -39,6 +40,7 @@ from mcp_gateway.config import GatewayConfig
 from mcp_gateway.detect import Detector, string_leaves
 from mcp_gateway.policy import Verdict, allowed_tools, check_call
 from mcp_gateway.ratelimit import CallLimiter
+from mcp_gateway.tracing import mark, stage
 from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams
 
 UPSTREAM_ERROR = -32001  # the gateway's own code: the upstream failed, not the agent
@@ -225,7 +227,9 @@ class Route:
         upstream = await self.upstreams.for_session(session_id_of(ctx))
         result = await upstream.session.list_tools(params=params)
         tools = [t for t in result.tools if t.name in allowed]
-        flagged = await self._screen_tools(tools)
+        with stage("screen_tools") as span:
+            flagged = await self._screen_tools(tools)
+            span.set_attributes({"mcp_gateway.tools.screened": len(tools), "mcp_gateway.tools.hidden": len(flagged)})
         return result.model_copy(update={"tools": [t for t in tools if t.name not in flagged]})
 
     async def _screen_tools(self, tools: list[Tool]) -> set[str]:
@@ -275,8 +279,17 @@ class Route:
             "is_caller_claim_overwritten": claimed_caller != caller,
             "policy_sha256": self.policy_hash,
         }
-        limit = await self.limiter.take(caller)
+        # The SDK's `tools/call <tool>` span: who called, and (later) the outcome.
+        call_span = trace.get_current_span()
+        call_span.set_attributes(
+            {"mcp_gateway.caller": caller, "mcp_gateway.route": self.name, "mcp_gateway.call_id": record["call_id"]}
+        )
+        with stage("rate_limit") as span:
+            limit = await self.limiter.take(caller)
+            if limit is not None:
+                mark(span, "rate_limited")
         if limit is not None:  # counted before policy, so denied calls can't be spammed either
+            call_span.set_attribute("mcp_gateway.decision", "rate_limited")
             self._try_append("call", decision="rate_limited", limit=limit, **record)
             return CallToolResult(
                 content=[
@@ -286,79 +299,99 @@ class Route:
                 ],
                 is_error=True,
             )
-        verdict = check_call(self.config.policy_for(caller), self.name, params.name, arguments)
-        if verdict.allowed:
-            try:
-                flagged = await self._tool_is_flagged(ctx, params.name)
-            except MCPError as exc:  # e.g. a per-session route asked for without a session
-                self._try_append("call", decision="upstream_error", error=exc.error.message, **record)
-                raise
-            except Exception as exc:  # couldn't list the upstream's tools to screen this one
-                self._try_append("call", decision="upstream_error", error=type(exc).__name__, **record)
-                raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
-            if flagged:
-                verdict = Verdict(False, f"tool {params.name!r} hidden: its description looks like an injection")
+        with stage("policy") as span:
+            verdict = check_call(self.config.policy_for(caller), self.name, params.name, arguments)
+            if not verdict.allowed:
+                mark(span, "denied")
+            else:
+                try:
+                    flagged = await self._tool_is_flagged(ctx, params.name)
+                except MCPError as exc:  # e.g. a per-session route asked for without a session
+                    self._try_append("call", decision="upstream_error", error=exc.error.message, **record)
+                    raise
+                except Exception as exc:  # couldn't list the upstream's tools to screen this one
+                    self._try_append("call", decision="upstream_error", error=type(exc).__name__, **record)
+                    raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
+                if flagged:
+                    verdict = Verdict(False, f"tool {params.name!r} hidden: its description looks like an injection")
+                    mark(span, "tool_hidden")
         if not verdict.allowed:
+            call_span.set_attribute("mcp_gateway.decision", "denied")
             self._try_append("call", decision="denied", reason=verdict.reason, **record)
             return CallToolResult(
                 content=[TextContent(type="text", text=f"Denied by gateway policy: {verdict.reason}.")],
                 is_error=True,
             )
         try:
-            self.audit.append("call", decision="forwarding", **record)
+            with stage("audit"):
+                self.audit.append("call", decision="forwarding", **record)
         except AuditError as exc:
+            call_span.set_attribute("mcp_gateway.decision", "audit_failed")
             print(f"mcp-gateway: {exc}; call refused", file=sys.stderr)
             raise MCPError(INTERNAL_ERROR, "the gateway can't write its audit log, so the call was refused") from exc
 
         start = time.perf_counter()
         try:
-            upstream = await self.upstreams.for_session(session_id_of(ctx))
-            result = await upstream.session.call_tool(
-                params.name, arguments, meta=cast(RequestParamsMeta, forwarded_meta)
-            )
+            # Inside this span, so the SDK client parents the upstream request on it.
+            with stage("forward"):
+                upstream = await self.upstreams.for_session(session_id_of(ctx))
+                result = await upstream.session.call_tool(
+                    params.name, arguments, meta=cast(RequestParamsMeta, forwarded_meta)
+                )
         except MCPError as exc:  # e.g. a per-session route asked for without a session
+            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
             self._try_append("result", decision="upstream_error", error=exc.error.message, **_ids(record))
             raise
         except Exception as exc:  # transport or protocol failure upstream
+            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
             self._try_append("result", decision="upstream_error", error=type(exc).__name__, **_ids(record))
             raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
         upstream_ms = (time.perf_counter() - start) * 1000
 
-        policy = self.config.policy_for(caller)
-        text = scan_text(result)
-        output = {"output_chars": len(text), "output_sha256": hashlib.sha256(text.encode()).hexdigest()}
-        unscanned = _unscanned_reason(result, text, self.config.detector.scan_cap_chars)
-        fields: dict[str, Any] = {"is_error": bool(result.is_error), "upstream_ms": round(upstream_ms, 3), **output}
-        if unscanned and not policy.allow_unscanned_content:
-            decision, returned = "blocked", blocked_result(f"it contains {unscanned}, which the gateway can't scan")
-            fields["reason"] = f"unscanned: {unscanned}"
-        else:
-            try:
-                verdict = await self.detector.scan(text)
-            except Exception as exc:  # timeouts included: fail closed
-                verdict = None
-                fields["reason"] = f"detector failed: {type(exc).__name__}"
-            if verdict is None:
-                decision, returned = "gateway_error", blocked_result("the gateway's detector failed on it")
+        with stage("detect") as span:
+            policy = self.config.policy_for(caller)
+            text = scan_text(result)
+            output = {"output_chars": len(text), "output_sha256": hashlib.sha256(text.encode()).hexdigest()}
+            unscanned = _unscanned_reason(result, text, self.config.detector.scan_cap_chars)
+            fields: dict[str, Any] = {"is_error": bool(result.is_error), "upstream_ms": round(upstream_ms, 3), **output}
+            if unscanned and not policy.allow_unscanned_content:
+                decision, returned = "blocked", blocked_result(f"it contains {unscanned}, which the gateway can't scan")
+                fields["reason"] = f"unscanned: {unscanned}"
             else:
-                fields.update(
-                    detector=self.detector.version,
-                    suspicious=verdict.suspicious,
-                    layer=verdict.layer,
-                    score=round(verdict.score, 6),
-                    matched=list(verdict.matched),
-                    scan_ms=round(verdict.ms, 3),
-                )
-                if not verdict.suspicious:
-                    decision, returned = "allowed", result
-                elif policy.on_suspicious == "block":
-                    decision, returned = "blocked", blocked_result("it appears to contain instructions aimed at you")
-                elif policy.on_suspicious == "annotate":
-                    decision, returned = "annotated", annotated_result(result)
+                try:
+                    verdict = await self.detector.scan(text)
+                except Exception as exc:  # timeouts included: fail closed
+                    verdict = None
+                    fields["reason"] = f"detector failed: {type(exc).__name__}"
+                if verdict is None:
+                    decision, returned = "gateway_error", blocked_result("the gateway's detector failed on it")
                 else:
-                    decision, returned = "logged", result
+                    fields.update(
+                        detector=self.detector.version,
+                        suspicious=verdict.suspicious,
+                        layer=verdict.layer,
+                        score=round(verdict.score, 6),
+                        matched=list(verdict.matched),
+                        scan_ms=round(verdict.ms, 3),
+                    )
+                    if not verdict.suspicious:
+                        decision, returned = "allowed", result
+                    elif policy.on_suspicious == "block":
+                        decision, returned = (
+                            "blocked",
+                            blocked_result("it appears to contain instructions aimed at you"),
+                        )
+                    elif policy.on_suspicious == "annotate":
+                        decision, returned = "annotated", annotated_result(result)
+                    else:
+                        decision, returned = "logged", result
+            span.set_attributes(detect_attributes(fields))
+            if decision in ("blocked", "gateway_error"):
+                mark(span, "detector_failed" if decision == "gateway_error" else f"blocked_{_block_kind(fields)}")
+        call_span.set_attribute("mcp_gateway.decision", decision)
         try:
-            self.audit.append("result", decision=decision, **fields, **_ids(record))
+            with stage("audit"):
+                self.audit.append("result", decision=decision, **fields, **_ids(record))
         except AuditError as exc:
             print(f"mcp-gateway: {exc}; output withheld", file=sys.stderr)
             raise MCPError(INTERNAL_ERROR, "the gateway can't write its audit log, so the output was withheld") from exc
@@ -383,6 +416,19 @@ class Route:
             self.audit.append(kind, **fields)
         except AuditError as exc:
             print(f"mcp-gateway: {exc}", file=sys.stderr)
+
+
+# What a span may say about a scan (fields of the audit line). Outcomes and
+# numbers only: never the output text or a free-text reason.
+DETECT_FIELDS = ("detector", "suspicious", "layer", "score", "matched", "scan_ms", "output_chars", "is_error")
+
+
+def detect_attributes(fields: dict[str, Any]) -> dict[str, Any]:
+    return {f"mcp_gateway.detect.{k}": fields[k] for k in DETECT_FIELDS if fields.get(k) is not None}
+
+
+def _block_kind(fields: dict[str, Any]) -> str:
+    return "unscanned" if str(fields.get("reason", "")).startswith("unscanned") else "suspicious"
 
 
 def _ids(record: dict[str, Any]) -> dict[str, Any]:
