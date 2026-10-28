@@ -2,7 +2,7 @@
 
 How mcp-gateway was built, in order: what was planned, what the spikes
 found, what broke, and what was decided. The decisions and their reasons
-are in the [ADRs](docs/adr/README.md); this is
+are in the [ADRs](adr/README.md); this is
 the story around them.
 
 ## Why

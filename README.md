@@ -157,7 +157,7 @@ only loses spans, and a stop waits at most 2 s for it.
   and what it doesn't defend against.
 - [Planning trail](docs/planning/README.md): seven phases, written before
   the code, including the ADRs and the spike results.
-- [Journey](JOURNEY.md): what the spikes found, the bugs the tests caught,
+- [Journey](docs/journey.md): what the spikes found, the bugs the tests caught,
   and what was reversed.
 
 Built on the MCP Python SDK's low-level `Server` (ADR-002), with FastAPI,
