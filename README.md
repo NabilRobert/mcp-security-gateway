@@ -12,7 +12,7 @@ filters out.
 
 | Layer | What it does |
 |---|---|
-| Auth | Bearer API keys, stored as SHA-256 hashes, checked before any MCP session exists (Starlette's auth middleware) |
+| Auth | Bearer API keys, stored as SHA-256 hashes, checked before any MCP session exists (Starlette's auth middleware). An optional call limit per key (`rate_limit`, on the `limits` library) |
 | Policy | Per caller and route: allowed tools (deny by default), argument rules (path prefixes with `..` resolved, full-match patterns) |
 | Upstreams | HTTP or stdio; the gateway holds each server's own credential, so an agent's key opens only the gateway. Stateful stdio servers get one process per MCP session |
 | Detection | Every tool output (text and structured content) is read by pattern rules, then a local classifier (ProtectAI's DeBERTa prompt-injection model, ONNX on CPU). A flagged output is blocked (default), annotated, or logged |
@@ -174,4 +174,4 @@ or cosmetic. CI runs ruff, pyright (strict on `src`) and pytest.
   accepted.
 - Attack tasks on the database (planted rows in a separate copy of the
   demo data).
-- Scan tool descriptions, and add a rate limit per key.
+- Scan tool descriptions.

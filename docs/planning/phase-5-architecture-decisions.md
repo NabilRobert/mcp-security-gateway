@@ -349,3 +349,23 @@ existing harness suites run through the gateway as they are.
   between the calls of one trial.
 - Keying on the SDK's session object: it doesn't live past one request.
 
+### ADR-012: A call limit per key, on the `limits` library
+**Context:** a *could* in Phase 2. Without it one key can call as fast as
+the upstream answers, and every output costs a scan.
+
+**Decision:**
+- `callers.<id>.rate_limit`, in the `limits` notation (`"120/minute"`, or
+  several as `"120/minute; 5000/day"`), checked when the config loads.
+- One moving-window limiter in memory, shared by all routes, so the limit
+  is per key, not per route.
+- It counts tool calls only, before the policy check, so a key can't spam
+  denied calls either. Every window is tested before any is counted, so a
+  call refused by one doesn't use up another.
+- A refused call gets an error result, like a policy denial, and a
+  `rate_limited` audit line. It is never forwarded.
+
+**Why `limits`:** it is the library behind SlowAPI and Flask-Limiter, with
+async storage and moving windows, so no hand-built counter.
+
+**Consequence:** counts reset on restart and aren't shared between gateway
+processes. A Redis storage would fix both, with one more service to run.
