@@ -67,7 +67,7 @@ def build_provider(env: Mapping[str, str] = os.environ) -> TracerProvider | None
     if processor is None:
         return None
     resource = Resource.create(
-        {"service.name": env.get("OTEL_SERVICE_NAME") or "mcp-gateway", "service.version": __version__}
+        {"service.name": env.get("OTEL_SERVICE_NAME") or "mcp-security-gateway", "service.version": __version__}
     )
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(processor)

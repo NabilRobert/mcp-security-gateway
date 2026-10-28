@@ -190,7 +190,7 @@ def test_no_endpoint_no_exporter() -> None:
 def test_a_dead_viewer_cant_hold_up_the_shutdown() -> None:
     provider = tracing.build_provider({"OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{closed_port()}"})
     assert provider is not None
-    assert provider.resource.attributes["service.name"] == "mcp-gateway"
+    assert provider.resource.attributes["service.name"] == "mcp-security-gateway"
     tracer = provider.get_tracer("load")
     for _ in range(5000):  # more than one batch queued
         with tracer.start_as_current_span("x"):
