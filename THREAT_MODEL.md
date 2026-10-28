@@ -40,11 +40,13 @@ servers.
 | 11 | One agent's actions leaking into another's run | Per-session upstream processes for stateful stdio servers | Tests, including with the harness's own launcher: a write in one session is absent in the next | Shared (HTTP) upstreams are shared by design |
 | 12 | Unaudited calls | The `call` line is written before forwarding; if it can't be written, the call is refused | Test: with the log unwritable, the call is refused and the upstream never called | — |
 | 13 | Poisoned tool descriptions from a malicious upstream | Tool definitions are untrusted too: each tool's title, description and parameter descriptions go through the same detector when tools are listed. A flagged tool is hidden, and calls to it are refused even if the agent never listed tools. A detector failure hides the tool (fail closed); a changed definition is scanned again | Tests: a flagged tool is hidden and its call refused without listing; a failing detector hides it; a changed description is rescanned. The real upstreams' 18 tools all pass with rules + model on (`eval/results/tool-descriptions/`) | The detector's recall was measured on outputs, not descriptions, so it will miss phrasings it misses there. Tool and parameter *names* aren't scanned. An upstream can still lie about what a tool does without injecting instructions |
+| 14 | One key flooding the gateway with calls | An optional limit per key on tool calls, across all routes (`rate_limit`, moving window, the `limits` library). Counted before policy, so denied calls count too; a refused call gets an error result and a `rate_limited` audit line | Tests: past the limit a call is refused and never forwarded; one key's limit doesn't touch another's; a call refused by one window doesn't use up another | Counts are in memory: a restart resets them, and two gateway processes count separately. `tools/list` and failed logins aren't counted. Large outputs still cost CPU, bounded by the window cap and the timeout |
 
 ## Not defended in v1
 
-- **Denial of service.** There is no rate limit per key. Large outputs cost
-  CPU, bounded by the window cap and the timeout.
+- **Denial of service beyond one key's calls.** Many keys, unauthenticated
+  floods and slow requests are left to whatever sits in front of the
+  gateway.
 - **Resources, prompts, sampling and elicitation.** The gateway proxies
   tools only and advertises nothing else.
 - **A compromised gateway host,** or a malicious operator.
