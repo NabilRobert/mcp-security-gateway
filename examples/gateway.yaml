@@ -17,6 +17,7 @@ callers:
   harness:
     key_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # quoted; replace with hash-key's output
     policy: read-only
+    rate_limit: "120/minute; 5000/day"   # tool calls, across all routes; omit for no limit
 
 policies:
   read-only:

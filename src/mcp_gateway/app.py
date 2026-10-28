@@ -33,6 +33,7 @@ from mcp_gateway.auth import ApiKeyBackend, CallerUser, KeyRejected, unauthorize
 from mcp_gateway.config import ConfigError, DetectorSettings, GatewayConfig, HttpUpstream, StdioUpstream
 from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDetector, StubDetector
 from mcp_gateway.proxy import Route
+from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
@@ -74,6 +75,7 @@ async def open_routes(
     tasks: TaskGroup,
 ) -> dict[str, Route]:
     routes: dict[str, Route] = {}
+    limiter = CallLimiter(config)
     for name, upstream in config.upstreams.items():
         per_session = isinstance(upstream, StdioUpstream) and upstream.per_session
         try:
@@ -95,9 +97,9 @@ async def open_routes(
         if per_session:
             sessions = PerSessionUpstreams(name, functools.partial(connect, name, upstream), tasks)
             stack.callback(sessions.close_all)  # runs before the task group waits for its tasks
-            routes[name] = Route(name, sessions, config, audit, detector)
+            routes[name] = Route(name, sessions, config, audit, detector, limiter)
         else:
-            routes[name] = Route(name, SharedUpstream(client), config, audit, detector)  # pyright: ignore[reportPossiblyUnboundVariable]
+            routes[name] = Route(name, SharedUpstream(client), config, audit, detector, limiter)  # pyright: ignore[reportPossiblyUnboundVariable]
     return routes
 
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import yaml
+from limits import parse_many
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 NAME = r"^[a-z0-9][a-z0-9-]{0,62}$"
@@ -90,6 +91,20 @@ class Policy(_Model):
 class Caller(_Model):
     key_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     policy: str
+    # Tool calls allowed per window, across all routes, in the `limits`
+    # library's notation: "60/minute", or several as "60/minute; 1000/day".
+    # None means no limit.
+    rate_limit: str | None = None
+
+    @field_validator("rate_limit")
+    @classmethod
+    def _parses(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                parse_many(value)
+            except ValueError as exc:
+                raise ValueError(f"rate_limit {value!r} isn't like '60/minute' or '60/minute; 1000/day'") from exc
+        return value
 
     @field_validator("key_sha256", mode="before")
     @classmethod

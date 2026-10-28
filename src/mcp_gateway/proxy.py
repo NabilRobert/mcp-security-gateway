@@ -31,6 +31,7 @@ from mcp_gateway.auth import CallerUser
 from mcp_gateway.config import GatewayConfig
 from mcp_gateway.detect import Detector, string_leaves
 from mcp_gateway.policy import allowed_tools, check_call
+from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams
 
 UPSTREAM_ERROR = -32001  # the gateway's own code: the upstream failed, not the agent
@@ -109,9 +110,17 @@ def annotated_result(result: CallToolResult) -> CallToolResult:
 
 class Route:
     def __init__(
-        self, name: str, upstreams: Upstreams, config: GatewayConfig, audit: AuditLog, detector: Detector
+        self,
+        name: str,
+        upstreams: Upstreams,
+        config: GatewayConfig,
+        audit: AuditLog,
+        detector: Detector,
+        limiter: CallLimiter | None = None,
     ) -> None:
         self.name = name
+        # One limiter shared by every route, so a caller's limit spans them all.
+        self.limiter = limiter or CallLimiter(config)
         self.upstreams = upstreams
         self.config = config
         self.audit = audit
@@ -174,6 +183,17 @@ class Route:
             "arguments": redact(arguments),
             "policy_sha256": self.policy_hash,
         }
+        limit = await self.limiter.take(caller)
+        if limit is not None:  # counted before policy, so denied calls can't be spammed either
+            self._try_append("call", decision="rate_limited", limit=limit, **record)
+            return CallToolResult(
+                content=[
+                    TextContent(
+                        type="text", text=f"Refused by the gateway: this key's call limit ({limit}) is used up."
+                    )
+                ],
+                is_error=True,
+            )
         verdict = check_call(self.config.policy_for(caller), self.name, params.name, arguments)
         if not verdict.allowed:
             self._try_append("call", decision="denied", reason=verdict.reason, **record)
