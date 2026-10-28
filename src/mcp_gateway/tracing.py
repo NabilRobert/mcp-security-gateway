@@ -69,7 +69,9 @@ def build_provider(env: Mapping[str, str] = os.environ) -> TracerProvider | None
     resource = Resource.create(
         {"service.name": env.get("OTEL_SERVICE_NAME") or "mcp-security-gateway", "service.version": __version__}
     )
-    provider = TracerProvider(resource=resource)
+    # No exit hook of the SDK's own: it would flush again at exit, with no
+    # time limit, after shutdown_tracing gave up on a dead viewer.
+    provider = TracerProvider(resource=resource, shutdown_on_exit=False)
     provider.add_span_processor(processor)
     return provider
 
