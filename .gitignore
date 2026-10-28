@@ -7,3 +7,5 @@ __pycache__/
 logs/
 models/
 mutants/
+# Per-run server banners from scripts/measure_gullible.py (temp paths only)
+eval/results/**/gateway.stderr
