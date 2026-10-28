@@ -2,6 +2,8 @@
 loosening a policy."""
 
 import hashlib
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -122,3 +124,13 @@ def test_the_config_path_can_come_from_the_environment(tmp_path: Path) -> None:
     path.write_text("upstreams: {}\n")
     result = CliRunner().invoke(cli, ["serve"], env={"MCP_GATEWAY_CONFIG": str(path)})
     assert result.exit_code == 2 and str(path) in result.stderr
+
+
+def test_the_cli_runs_as_a_module() -> None:
+    """`python -m mcp_gateway.cli` works like the `mcp-gateway` script, rather
+    than exiting silently (found in Juku's spike 6)."""
+    result = subprocess.run(  # noqa: S603 (a fixed command: this interpreter)
+        [sys.executable, "-m", "mcp_gateway.cli", "--help"], capture_output=True, text=True, timeout=20, check=False
+    )
+    assert result.returncode == 0
+    assert "verify-log" in result.stdout
