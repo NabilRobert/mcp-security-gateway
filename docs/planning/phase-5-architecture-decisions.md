@@ -480,8 +480,9 @@ denials and blocks, no content.
   Detector verdicts, rule IDs, scores, counts and timings are recorded.
   No content-capture switch: nothing the gateway would add needs one.
 - Export in the background with a 2 s timeout; a stop waits at most 2 s,
-  so a dead viewer only loses spans. The SDK's own exit hook is off: it
-  would flush again, with no limit, after the capped stop gave up.
+  so a dead viewer only loses spans. The SDK's own exit hook is off, so
+  the capped stop is the one flush. (Once it has run, the hook returns at
+  once anyway, as Project 6 measured with a dead viewer and a full queue.)
 - A SIGTERM (systemd, `docker stop`) unwinds like Ctrl-C. uvicorn re-raises
   the signal after its own shutdown, and with the default handler that
   killed the process before any cleanup ran: no flush, no upstream
