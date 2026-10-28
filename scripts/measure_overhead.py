@@ -119,10 +119,18 @@ def decision_counts(audit: Path) -> dict[str, Any]:
     return dict(sorted(counts.items()))
 
 
+RATE_LIMITED = "rate limit of"  # MCP-backbone's refusal; a refused call is fast, so it would skew the timings
+rate_limited = 0
+
+
 async def timed(client: Client, tool: str, args: dict[str, Any]) -> float:
+    global rate_limited
     start = time.perf_counter()
-    await client.session.call_tool(tool, args)
-    return (time.perf_counter() - start) * 1000
+    result = await client.session.call_tool(tool, args)
+    elapsed = (time.perf_counter() - start) * 1000
+    if any(RATE_LIMITED in getattr(c, "text", "") for c in result.content):
+        rate_limited += 1
+    return elapsed
 
 
 async def compare(direct: Client, via: Client, calls: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
@@ -199,6 +207,12 @@ async def main() -> int:
         "audit_fsync": True,
         "configurations": {name: await measure(name, det, backbone_key) for name, det in DETECTORS.items()},
     }
+    if rate_limited:
+        print(
+            f"REFUSED: {rate_limited} calls were rate-limited by the upstream; the timings are not valid. "
+            "MCP-backbone's window is an hour; rerun after it resets."
+        )
+        return 1
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return 0

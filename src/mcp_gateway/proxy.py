@@ -62,10 +62,14 @@ def text_of(result: CallToolResult) -> str:
 
 def scan_text(result: CallToolResult) -> str:
     """Everything a model could read: the text blocks and, since clients may
-    show it to the model too, the string values of structured content."""
-    parts = [text_of(result)]
+    show it to the model too, the string values of structured content. A
+    structured string already inside the text blocks is left out: it is
+    scanned there already. (Servers often repeat their text as structured
+    content; scanning it twice doubled the model's work.)"""
+    text = text_of(result)
+    parts = [text]
     if result.structured_content:
-        parts.extend(string_leaves(result.structured_content))
+        parts.extend(s for s in string_leaves(result.structured_content) if s not in text)
     return "\n".join(p for p in parts if p)
 
 

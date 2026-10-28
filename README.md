@@ -93,17 +93,22 @@ about 1.7× faster but lost 19 points of recall, failing the acceptance rule
 fixed beforehand, so the fp32 model stays
 ([Phase 6](docs/planning/phase-6-risks-skeleton.md)).
 
-**3. Overhead** ([`eval/results/overhead/`](eval/results/overhead/README.md)).
-- **The proxy alone** adds a median of about 3–8 ms per call (p95 under
-  50 ms), with the audit log `fsync`ing. The rules add nothing measurable.
-- **The model layer doesn't hold up inside the running gateway on a
-  laptop CPU.** It scans the text twice (once as text, once as structured
-  content), and timed-out scans keep running and slow the next ones. So 35%
-  of filesystem calls were blocked by the 2 s timeout, which the offline
-  test score above doesn't capture.
-- Until that's fixed, the **model layer is not recommended for normal
-  use.** Run rules only, which catch little that's unseen but block nothing
-  normal.
+**3. Overhead and false positives through the running gateway**
+([`overhead/`](eval/results/overhead/README.md),
+[`gateway-fp/`](eval/results/gateway-fp/README.md)).
+- **The proxy alone** adds a median of about 3–9 ms per call (p95 15 ms or
+  less), with the audit log `fsync`ing. The rules add nothing measurable.
+- **The model layer** adds 18–87 ms at the median, but its p95 reaches the
+  2 s timeout on large outputs.
+  - Through the gateway, it blocks **2.5% of held-out normal outputs**
+    (10 of 405), against 1.2% offline. Most of the difference is large
+    outputs timing out on a laptop CPU.
+  - A first version blocked 35% of filesystem calls. It scanned repeated
+    text twice, and timed-out scans kept running and slowed the next. Both
+    are fixed (scan `s2`).
+- **Choose per deployment.** Rules only block nothing normal but catch
+  little that's unseen. Rules + model catch about half, and wrongly block
+  about 1 normal output in 40.
 
 **Not measured yet:** how often real models obey these injections, with
 and without the gateway. Those runs need a model budget. Until then, no
@@ -162,9 +167,8 @@ or cosmetic. CI runs ruff, pyright (strict on `src`) and pytest.
 
 ## Next
 
-- Fix the model layer's in-gateway cost: scan duplicated structured
-  content once, run one model scan at a time so abandoned scans can't pile
-  up, then remeasure the false positives *through* the gateway.
+- A faster model layer (Prompt Guard 2 22M, or a GPU), so large outputs
+  stop timing out.
 - Real-model runs (slice H), when there is a budget.
 - Try Llama Prompt Guard 2 22M as the model layer, once its licence is
   accepted.

@@ -1,0 +1,27 @@
+{
+  "detector": "rules + model (fp32, threshold 0.999, 2 s timeout, scan s2)",
+  "pagila": {
+    "benign_outputs": 164,
+    "blocked": 4,
+    "rate_limited": 0,
+    "false_positive_rate": 0.0244
+  },
+  "files": {
+    "benign_outputs": 241,
+    "blocked": 6,
+    "rate_limited": 0,
+    "false_positive_rate": 0.0249
+  },
+  "all": {
+    "benign_outputs": 405,
+    "blocked": 10,
+    "false_positive_rate": 0.0247
+  },
+  "gateway_decisions": {
+    "files: allowed": 235,
+    "files: gateway_error": 6,
+    "pagila: allowed": 160,
+    "pagila: blocked": 2,
+    "pagila: gateway_error": 2
+  }
+}

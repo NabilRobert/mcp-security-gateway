@@ -272,3 +272,48 @@ async def test_model_times_out_rather_than_hangs() -> None:
     with pytest.raises(TimeoutError):
         await model.scan(" ".join(f"word{i}" for i in range(1500)))
     await asyncio.sleep(0)
+
+
+@needs_model
+async def test_a_timed_out_scan_is_stopped_not_left_running() -> None:
+    """Before: an abandoned scan kept the CPU busy and slowed the next ones
+    until calls piled up at the timeout. Now the lock is free again within
+    about one window's time, not after all the remaining windows."""
+    import time
+
+    from mcp_gateway.detect import ModelDetector
+
+    model = ModelDetector(MODEL_DIR, threshold=0.99, max_windows=16, timeout_s=0.05)
+    long_text = " ".join(f"word{i}" for i in range(2500))  # 14 windows: seconds of work
+    with pytest.raises(TimeoutError):
+        await model.scan(long_text)
+    start = time.perf_counter()
+    acquired = model._lock.acquire(timeout=10)  # pyright: ignore[reportPrivateUsage]
+    waited = time.perf_counter() - start
+    model._lock.release()  # pyright: ignore[reportPrivateUsage]
+    assert acquired and waited < 1.5
+
+
+@needs_model
+async def test_the_next_scan_after_a_timeout_runs_at_full_speed() -> None:
+    from mcp_gateway.detect import ModelDetector
+
+    model = ModelDetector(MODEL_DIR, threshold=0.99, max_windows=16, timeout_s=0.05)
+    with pytest.raises(TimeoutError):
+        await model.scan(" ".join(f"word{i}" for i in range(2500)))  # 14 windows
+    model.timeout_s = 5.0
+    verdict = await model.scan("The weekly sync moved to Thursdays at 10:00.")
+    assert not verdict.suspicious and verdict.ms < 1500
+
+
+async def test_repeated_structured_text_is_scanned_once() -> None:
+    from mcp.types import CallToolResult, TextContent
+
+    from mcp_gateway.proxy import scan_text
+
+    same = CallToolResult(
+        content=[TextContent(type="text", text="file body")], structured_content={"content": "file body"}
+    )
+    extra = CallToolResult(content=[TextContent(type="text", text="ok")], structured_content={"note": "different"})
+    assert scan_text(same) == "file body"
+    assert scan_text(extra) == "ok\ndifferent"

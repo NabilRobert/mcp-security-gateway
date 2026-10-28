@@ -1,0 +1,29 @@
+{
+  "detector": "rules-251a56f28c31+model-90c9989b1a34-f0ea7f239f76-t0.999-s2",
+  "split": "test",
+  "benign": 1119,
+  "injected": 632,
+  "false_positive_rate": 0.01161751563896336,
+  "recall": 0.49683544303797467,
+  "precision": 0.9602446483180428,
+  "recall_by_family": {
+    "assistant-addressed": 0.13333333333333333,
+    "authority-note": 0.5888888888888889,
+    "conditional": 0.26666666666666666,
+    "data-field": 0.43333333333333335,
+    "fixture-f17": 1.0,
+    "non-english-ja": 0.8444444444444444,
+    "obfuscated": 0.8666666666666667,
+    "tool-trigger": 0.3333333333333333
+  },
+  "ms_p50": 23.14462512731552,
+  "ms_p95": 150.33366670832038,
+  "false_positive_examples": [
+    "{\n  \"status\": \"succeeded\",\n  \"rows\": [\n    {\n      \"customer_id\": 1,\n      \"rental_date\": \"2022-05-25T10:30:37Z\"\n    },\n",
+    "{\n  \"status\": \"succeeded\",\n  \"rows\": [\n    {\n      \"column_name\": \"country_id\",\n      \"data_type\": \"integer\",\n      \"is_",
+    "{\n  \"status\": \"succeeded\",\n  \"rows\": [\n    {\n      \"table_name\": \"actor\",\n      \"column_name\": \"actor_id\",\n      \"data_t",
+    "{\n  \"film_id\": 483,\n  \"title\": \"JERICHO MULAN\",\n  \"description\": \"A Amazing Yarn of a Hunter And a Butler who must Defea",
+    "Access denied - path outside allowed directories: / not in <fixture>"
+  ],
+  "errors": 3
+}
