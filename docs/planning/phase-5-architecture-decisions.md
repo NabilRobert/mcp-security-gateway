@@ -372,6 +372,15 @@ existing harness suites run through the gateway as they are.
   failure isn't cached, so one slow scan doesn't hide a tool for good: the
   next listing tries again.
 
+**Options considered:**
+- **The gateway's own detector (chosen):** the rules and the classifier
+  already measured on outputs; the new code is only the glue at
+  `tools/list` and `tools/call`.
+- mcp-scan (Invariant Labs): scans tool descriptions from the client's
+  side, when servers are installed, not inline on every listing. It
+  complements the gateway rather than replacing this check.
+- Rewriting or annotating flagged descriptions: rejected above.
+
 **Consequence:**
 - A false positive hides a benign tool the agent can't work around, which
   costs more than a blocked output. The real upstreams' 18 tools all pass
