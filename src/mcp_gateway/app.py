@@ -9,10 +9,13 @@ clients they forward to (Spike 1).
 import contextlib
 import functools
 import os
+import signal
 import sys
+import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from typing import cast
+from types import FrameType
+from typing import Any, cast
 
 import anyio
 import httpx2
@@ -210,19 +213,41 @@ async def serve(
     detector = detector or build_detector(config.detector)
     audit = AuditLog(config.audit.path, fsync=config.audit.fsync)
     tracing = configure_tracing()  # None unless OTEL_EXPORTER_OTLP_ENDPOINT is set
+    previous_sigterm = _unwind_on_sigterm()
     try:
         await _serve(config, audit, detector, host=host, port=port, connect=connect, started=started)
     except BaseExceptionGroup as group:
         # A start-up error raised inside an upstream client's task group comes
         # out wrapped; surface it as itself so the CLI exits 2 with a message.
+        if group.subgroup(SystemExit) is not None:
+            raise SystemExit(0) from None  # a SIGTERM, unwound through the task group
         found = group.subgroup(ConfigError)
         if found is None:
             raise
         raise _first(found) from group
     finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
         audit.close()
         if tracing is not None:
             await anyio.to_thread.run_sync(shutdown_tracing, tracing)
+
+
+def _terminated(signum: int, frame: FrameType | None) -> None:  # noqa: ARG001
+    raise SystemExit(0)
+
+
+def _unwind_on_sigterm() -> Any:
+    """Make SIGTERM unwind like Ctrl-C. uvicorn handles it, stops serving,
+    then restores the handler it found and raises the signal again; with
+    the default handler that kills the process before any cleanup runs (the
+    audit log's stop line, the upstreams, the last spans). This handler is
+    what it restores, so the re-raised signal unwinds instead. Returns the
+    handler to put back, or None off the main thread, where signals can't
+    be handled."""
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    return signal.signal(signal.SIGTERM, _terminated)
 
 
 def _leaf(exc: BaseException) -> BaseException:
@@ -273,4 +298,10 @@ async def _serve(
         )
         if started is not None:
             started(server)
-        await server.serve()
+        try:
+            await server.serve()
+        finally:
+            try:
+                audit.append("stop", version=__version__)
+            except AuditError as exc:
+                print(f"mcp-gateway: {exc}", file=sys.stderr)
