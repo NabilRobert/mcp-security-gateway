@@ -155,6 +155,13 @@ async def test_a_refused_key_line_records_where_it_came_from(gateway: RunningGat
 
 
 class BrokenSession:
+    """Lists its tools, then fails every call."""
+
+    async def list_tools(self, params: Any = None) -> Any:  # noqa: ARG002
+        from mcp.types import ListToolsResult, Tool
+
+        return ListToolsResult(tools=[Tool(name="echo", description="Echo the text back.", input_schema={})])
+
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:  # noqa: ARG002
         raise ConnectionError("upstream went away")
 

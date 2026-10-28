@@ -114,6 +114,9 @@ class DetectorSettings(_Model):
     rules: bool = True
     model: ModelSettings | None = None
     scan_cap_chars: Annotated[int, Field(ge=1)] = 262_144
+    # Upstream tool definitions are untrusted too: a description is read by
+    # the model like any tool output. A flagged tool is hidden and refused.
+    scan_tool_descriptions: bool = True
 
 
 class AuditSettings(_Model):
