@@ -185,8 +185,8 @@ async def test_recorded_calls_replay_identically_against_the_real_servers(
 
     from mcp import StdioServerParameters
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spikes"))
-    import s1_transparency as s1  # pyright: ignore[reportMissingImports]
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import recorded_calls as s1  # pyright: ignore[reportMissingImports]
 
     backbone_key: str = s1.local_backbone_key()
     monkeypatch.setenv("MCP_BACKBONE_LOCAL_KEY", backbone_key)

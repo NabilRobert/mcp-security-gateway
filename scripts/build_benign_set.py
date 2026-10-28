@@ -1,11 +1,12 @@
-"""Spike 5 (throwaway): can the benign half of the labelled set be built by
-replaying the harness's recorded tool calls against local servers?
+"""Builds the benign half of the labelled set (eval/benign/outputs.jsonl)
+by replaying the harness's recorded tool calls against local servers. It
+began as Spike 5 (Phase 6), which asked whether this could be done at $0.
 
 Replays every distinct recorded (tool, arguments) pair, direct to the local
 MCP-backbone (repro stack) and the pinned filesystem server, and writes the
 full text outputs to eval/benign/outputs.jsonl. No model calls.
 
-    .venv/bin/python -I spikes/s5_replay.py
+    .venv/bin/python -I scripts/build_benign_set.py
 """
 
 import asyncio
@@ -23,7 +24,7 @@ from typing import Any
 from mcp import Client, StdioServerParameters
 
 sys.path.insert(0, str(Path(__file__).parent))
-import s1_transparency as s1  # noqa: E402
+import recorded_calls as s1
 
 OUT = Path(__file__).resolve().parents[1] / "eval" / "benign" / "outputs.jsonl"
 
@@ -47,8 +48,14 @@ def text_of(result: Any) -> str:
     return "\n".join(item.text for item in result.content if getattr(item, "type", None) == "text")
 
 
-async def replay(source: str, client: Client, calls: list[tuple[str, dict[str, Any]]], out: list[dict[str, Any]],
-                 stats: Counter[str], root: str | None = None) -> None:
+async def replay(
+    source: str,
+    client: Client,
+    calls: list[tuple[str, dict[str, Any]]],
+    out: list[dict[str, Any]],
+    stats: Counter[str],
+    root: str | None = None,
+) -> None:
     seen: set[str] = set()
     for tool, args in calls:
         if root is not None:
@@ -66,11 +73,17 @@ async def replay(source: str, client: Client, calls: list[tuple[str, dict[str, A
             continue
         text = text_of(result)
         stats[f"{source}:{'error_result' if result.is_error else 'ok'}"] += 1
-        out.append({
-            "id": hashlib.sha256(json.dumps([source, tool, args], sort_keys=True).encode()).hexdigest()[:16],
-            "source": source, "tool": tool, "arguments": args,
-            "is_error": bool(result.is_error), "chars": len(text), "text": text,
-        })
+        out.append(
+            {
+                "id": hashlib.sha256(json.dumps([source, tool, args], sort_keys=True).encode()).hexdigest()[:16],
+                "source": source,
+                "tool": tool,
+                "arguments": args,
+                "is_error": bool(result.is_error),
+                "chars": len(text),
+                "text": text,
+            }
+        )
 
 
 async def main() -> int:
