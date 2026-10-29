@@ -166,6 +166,8 @@ only loses spans, and a stop (Ctrl-C or SIGTERM) waits at most 2 s for it.
 
 ## Docs
 
+- [Guide](docs/guide.md): how one tool call flows through the gateway, a
+  glossary, and where to change things. Start here to learn the code.
 - [Threat model](THREAT_MODEL.md): what it defends against, the evidence,
   and what it doesn't defend against.
 - [Architecture decisions](docs/adr/README.md): the components, the stack,
