@@ -93,4 +93,35 @@ is now always loaded with both turned off, and the windowing does that job.
 ProtectAI's file has neither, so its scores and its detector version don't
 change.
 
+**Prompt Guard 2 measured as a replacement (2026-10-29):** Meta's Llama
+Prompt Guard 2, 22M and 86M, converted to ONNX (outputs checked against
+PyTorch: largest probability difference 0.000014, no threshold flipped),
+run through the gateway's own model layer. Each threshold was chosen on
+dev by the rule above, and test was scored once per model.
+
+| Rules + model, held-out test | Threshold | False positives | Recall | One window, median |
+|---|---|---|---|---|
+| Rules alone | — | 0.0% | 14.6% | — |
+| **ProtectAI v2** (current) | 0.999 | 1.2% | **49.7%** | 455 ms |
+| Prompt Guard 2 22M | 0.99 | 0.9% | 19.3% | 146 ms |
+| Prompt Guard 2 86M | 0.999 | 2.1% | 18.5% | 439 ms |
+
+- Both Prompt Guard models add about 4–5 points over the rules alone, where
+  ProtectAI adds 35. Both catch 0% of the messages addressed to the
+  assistant, the conditionals and the Japanese family on test.
+- Their scores sit lower than ProtectAI's. At Meta's default of 0.5, on dev,
+  22M reaches 23% recall and 86M 35% (8.5% false positives), still below
+  ProtectAI at 0.999 (49.7%, 1.6%).
+- 22M is about three times as fast (one 512-token window, timed back to
+  back with the others) and wrongly flagged none of Juku's refusal
+  messages, which ProtectAI flags; neither model flagged Juku's planted
+  marker text (shared notes, 2026-10-29).
+- The scoring runs shared the laptop with other work (load average up to
+  26), so their timeout counts are high, 86M's most (23 on test). A
+  timed-out scan counts as flagged, so this flatters recall slightly; it
+  can't explain the gap.
+- **Recommendation: keep ProtectAI as the model layer.**
+  `scripts/compare_models.py` regenerates
+  `eval/results/model-comparison/summary.json`.
+
 Part of the [architecture decisions](README.md) (Phase 5).

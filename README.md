@@ -203,10 +203,9 @@ or cosmetic. CI runs ruff, pyright (strict on `src`) and pytest.
 
 ## Next
 
-- A faster model layer (Prompt Guard 2 22M, or a GPU), so large outputs
-  stop timing out.
+- A faster model layer (a GPU, or another model), so large outputs stop
+  timing out. Meta's Prompt Guard 2 was measured as a replacement and
+  catches far fewer unseen injections ([ADR-005](docs/adr/adr-005-two-detector-layers.md)).
 - Real-model runs (slice H), when there is a budget.
-- Try Llama Prompt Guard 2 22M as the model layer, once its licence is
-  accepted.
 - Attack tasks on the database (planted rows in a separate copy of the
   demo data).
