@@ -67,3 +67,4 @@ under each, dated.
 | [ADR-012](adr-012-per-key-call-limit.md) | A call limit per key, on the `limits` library |
 | [ADR-013](adr-013-forward-meta-stamp-caller.md) | Forward each call's `_meta`, with the caller stamped in |
 | [ADR-014](adr-014-opentelemetry-tracing.md) | OpenTelemetry tracing, on the MCP SDK's own spans |
+| [ADR-015](adr-015-keep-protectai-over-prompt-guard-2.md) | Keep ProtectAI as the model layer, not Prompt Guard 2 |

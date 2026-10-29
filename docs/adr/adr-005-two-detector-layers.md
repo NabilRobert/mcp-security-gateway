@@ -93,4 +93,8 @@ is now always loaded with both turned off, and the windowing does that job.
 ProtectAI's file has neither, so its scores and its detector version don't
 change.
 
+**Prompt Guard 2 measured as a replacement (2026-10-29):** it caught far
+fewer unseen injections, so ProtectAI stays. See
+[ADR-015](adr-015-keep-protectai-over-prompt-guard-2.md).
+
 Part of the [architecture decisions](README.md) (Phase 5).
