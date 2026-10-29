@@ -20,10 +20,13 @@ import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import anyio
 import yaml
+
+if TYPE_CHECKING:
+    from tokenizers import Tokenizer
 
 RULES_FILE = Path(__file__).parent / "rules" / "injection.yaml"
 
@@ -102,6 +105,21 @@ class RulesDetector:
         )
 
 
+def load_tokenizer(path: Path) -> "Tokenizer":
+    """The model's tokenizer, set to return every token of a text and
+    nothing else. A tokenizer.json can carry padding and truncation (Meta's
+    Prompt Guard 2 ships both at 512): with padding, each window would be
+    mostly [PAD] tokens the model is told to read; with truncation, only the
+    first 512 tokens would ever be scanned, so an injection further down an
+    output would pass unread. The windowing below does both jobs itself."""
+    from tokenizers import Tokenizer
+
+    tokenizer = Tokenizer.from_file(str(path))
+    tokenizer.no_padding()
+    tokenizer.no_truncation()
+    return tokenizer
+
+
 class ModelDetector:
     """The classifier over 512-token windows overlapping by 64; the output's
     score is its highest window. At most `max_windows` windows are scored; an
@@ -121,14 +139,13 @@ class ModelDetector:
 
     def __init__(self, model_dir: Path, *, threshold: float, max_windows: int = 16, timeout_s: float = 2.0) -> None:
         import onnxruntime as ort  # pyright: ignore[reportMissingTypeStubs]
-        from tokenizers import Tokenizer
 
         # onnxruntime ships no type stubs; it is called through typed wrappers.
         session: Any = ort.InferenceSession(str(model_dir / "model.onnx"), providers=["CPUExecutionProvider"])
         self._run: Callable[[dict[str, Any], Any], list[Any]] = lambda feeds, opts: session.run(None, feeds, opts)
         self._run_options = cast(Callable[[], Any], ort.RunOptions)  # pyright: ignore[reportUnknownMemberType]
         self._lock = threading.Lock()
-        self.tokenizer = Tokenizer.from_file(str(model_dir / "tokenizer.json"))
+        self.tokenizer = load_tokenizer(model_dir / "tokenizer.json")
         cls, sep = self.tokenizer.token_to_id("[CLS]"), self.tokenizer.token_to_id("[SEP]")
         if cls is None or sep is None:
             raise ValueError("the tokenizer has no [CLS]/[SEP] tokens")

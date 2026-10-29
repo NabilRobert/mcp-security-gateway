@@ -84,4 +84,13 @@ A paid LLM judge is ruled out by the $0 budget.
   as unscanned and blocked unless `allow_unscanned_content` is set, instead
   of being cut and passed on. It is simpler, and it fails closed.
 
+**Found while trying Prompt Guard 2 (2026-10-29):** the model layer used a
+tokenizer.json as shipped. Meta's Prompt Guard 2 ships its file with
+padding and truncation at 512 tokens, so each window would have been mostly
+`[PAD]`, and only an output's first 512 tokens would ever have been scanned:
+the gateway would have failed open on anything further down. The tokenizer
+is now always loaded with both turned off, and the windowing does that job.
+ProtectAI's file has neither, so its scores and its detector version don't
+change.
+
 Part of the [architecture decisions](README.md) (Phase 5).
