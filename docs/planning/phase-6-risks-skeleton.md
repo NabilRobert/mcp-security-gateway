@@ -396,4 +396,7 @@ description and schema only.
 - **The fp32 model stays.** The int8 copy is not adopted. Arthur's
   preferred long-run option is Prompt Guard 2 22M, once its licence is
   accepted (a reminder is in the handover).
+- *Later (2026-10-29):* Prompt Guard 2 was measured once its licence was
+  accepted, and it caught far fewer unseen injections; ProtectAI stays
+  ([ADR-015](../adr/adr-015-keep-protectai-over-prompt-guard-2.md)).
 
