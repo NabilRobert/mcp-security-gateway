@@ -48,6 +48,11 @@ denials and blocks, no content.
 - With tracing off, the API's no-op spans pass a client's `traceparent`
   through unchanged; with it on, the upstream sees the gateway's span as
   its parent. Either way one trace.
+- The first trace through a fresh gateway showed 205 ms inside `forward`
+  in no span (Project 6, 2026-10-29). It was the MCP SDK client's first
+  output-schema check importing jsonschema; later calls took 0.3 ms. The
+  gateway now loads it at start-up: a fresh process's first call went
+  from about 40 ms to about 6 ms, against 3–4 ms for later calls.
 - A refusal by the auth middleware happens before any MCP request, so it
   has no span; it is in the audit log.
 - Tests switch tracing on and off through a test-only provider, because

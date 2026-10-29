@@ -211,6 +211,7 @@ async def serve(
     """Run until stopped. Raises ConfigError before serving if anything at
     start-up is wrong."""
     detector = detector or build_detector(config.detector)
+    preload_output_validation()
     audit = AuditLog(config.audit.path, fsync=config.audit.fsync)
     tracing = configure_tracing()  # None unless OTEL_EXPORTER_OTLP_ENDPOINT is set
     previous_sigterm = _unwind_on_sigterm()
@@ -231,6 +232,18 @@ async def serve(
         audit.close()
         if tracing is not None:
             await anyio.to_thread.run_sync(shutdown_tracing, tracing)
+
+
+def preload_output_validation() -> None:
+    """Load the MCP SDK client's output-schema validation now, not on the
+    first call. The client re-checks each result against its tool's output
+    schema and imports jsonschema the first time, which stalled the first
+    call through each gateway process (205 ms in Project 6's trace, inside
+    `forward` and in no span). Only a speed-up: they come with the MCP SDK,
+    not as the gateway's own dependency, so a missing one is skipped."""
+    with contextlib.suppress(ImportError):
+        import jsonschema.validators  # noqa: F401  # pyright: ignore[reportUnusedImport]
+        import referencing  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
 def _terminated(signum: int, frame: FrameType | None) -> None:  # noqa: ARG001
