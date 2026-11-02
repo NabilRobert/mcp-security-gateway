@@ -157,7 +157,7 @@ only loses spans, and a stop (Ctrl-C or SIGTERM) waits at most 2 s for it.
 
 | Path | What's there |
 |---|---|
-| `src/mcp_gateway/` | The gateway: `config`, `auth`, `policy`, `ratelimit`, `proxy`, `upstreams`, `detect`, `audit`, `tracing`, `app`, `cli`; `rules/` holds the detector's patterns, and `eval/` scores the detector offline |
+| `src/mcp_gateway/` | The gateway: `config`, `auth`, `policy`, `ratelimit`, `proxy` (and `calls`, `outputs`, `tool_screen`), `sessions`, `upstreams`, `detect`, `audit`, `tracing`, `app`, `cli`; `rules/` holds the detector's patterns, and `eval/` scores the detector offline |
 | `tests/` | The test suite (no network and no model unless asked for) |
 | `eval/` | The labelled set (`benign/`, `injections/`) and every published result (`results/`) |
 | `scripts/` | The measurements behind the numbers above, and the builder of the benign set |
