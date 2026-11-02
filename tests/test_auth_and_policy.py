@@ -195,4 +195,4 @@ async def test_another_callers_key_cant_use_a_session_over_http(gateway: Running
             gateway.url(), headers={**session_headers, "Authorization": f"Bearer {KEY_B}"}, json=list_tools
         )
     assert own.status_code == 200 and "echo" in own.text
-    assert "another caller" in other.text and "echo" not in other.text
+    assert other.status_code == 404 and "echo" not in other.text

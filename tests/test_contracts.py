@@ -310,19 +310,22 @@ class Recorder:
     def __init__(self) -> None:
         self.ended: list[tuple[str, str]] = []
 
+    def may_use_session(self, session: str, caller: str) -> bool:  # noqa: ARG002
+        return True
+
     def session_ended(self, session: str, caller: str) -> None:
         self.ended.append((session, caller))
 
 
 async def run_hook(method: str, path: str, headers: list[tuple[bytes, bytes]], user: Any) -> Recorder:
-    from mcp_gateway.app import SessionEndHook
+    from mcp_gateway.app import SessionGuard
 
     route = Recorder()
 
     async def app(scope: Any, receive: Any, send: Any) -> None:  # noqa: ARG001
         return None
 
-    hook = SessionEndHook(app, {"fake": route})  # type: ignore[dict-item]
+    hook = SessionGuard(app, {"fake": route})  # type: ignore[dict-item]
     scope: dict[str, Any] = {"type": "http", "method": method, "path": path, "headers": headers}
     if user is not None:
         scope["user"] = user
