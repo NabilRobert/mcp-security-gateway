@@ -11,12 +11,13 @@ trace context), with the authenticated caller stamped into it. The gateway
 neither reads nor logs what else `_meta` holds.
 """
 
+import contextlib
 import hashlib
 import re
 import sys
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
 
 from mcp.server import Server, ServerRequestContext
@@ -41,8 +42,11 @@ from mcp_gateway.detect import Detector, string_leaves
 from mcp_gateway.policy import Verdict, allowed_tools, check_call
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.tracing import mark, stage
-from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams
+from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams, list_all_tools
 
+SCHEMA_STRUCTURE_KEYWORDS = frozenset({"$schema", "$id", "$ref", "type", "format", "required"})
+SCHEMA_DATA_KEYWORDS = frozenset({"default", "const", "enum", "examples"})
+SCHEMA_NAME_KEYWORDS = frozenset({"properties", "patternProperties", "$defs", "definitions"})
 UPSTREAM_ERROR = -32001  # the gateway's own code: the upstream failed, not the agent
 SECRET_NAME = re.compile(r"key|token|password|passwd|secret|authorization|credential|cookie", re.IGNORECASE)
 REDACTED = "<redacted>"
@@ -91,23 +95,32 @@ def session_id_of(ctx: ServerRequestContext[Any, Any]) -> str | None:
 
 
 def tool_text(tool: Tool) -> str:
-    """What a model reads of a tool definition: its title, description, and
-    every description inside its input schema."""
-    parts = [tool.title or "", tool.description or "", *schema_descriptions(tool.input_schema)]
+    """Everything a model can read of a tool definition."""
+    annotation_title = tool.annotations.title if tool.annotations else None
+    parts = [tool.name, tool.title, tool.description, annotation_title]
+    parts += [*schema_text(tool.input_schema), *schema_text(tool.output_schema)]
     return "\n".join(p for p in parts if p)
 
 
-def schema_descriptions(schema: Any) -> list[str]:
+def schema_text(schema: Any) -> list[str]:
+    """Every string in a JSON Schema except its structural keywords. Under
+    `default`, `enum` and the like, any key is data; under `properties`, keys
+    are parameter names, which a model reads too."""
+    if isinstance(schema, list):
+        return [text for item in cast(list[Any], schema) for text in schema_text(item)]
+    if not isinstance(schema, dict):
+        return [schema] if isinstance(schema, str) else []
     found: list[str] = []
-    if isinstance(schema, dict):
-        for key, value in cast(dict[str, Any], schema).items():
-            if key == "description" and isinstance(value, str):
-                found.append(value)
-            else:
-                found.extend(schema_descriptions(value))
-    elif isinstance(schema, list):
-        for value in cast(list[Any], schema):
-            found.extend(schema_descriptions(value))
+    for key, value in cast(dict[str, Any], schema).items():
+        if key in SCHEMA_STRUCTURE_KEYWORDS:
+            continue
+        if key in SCHEMA_DATA_KEYWORDS:
+            found.extend(string_leaves(value))
+        elif key in SCHEMA_NAME_KEYWORDS and isinstance(value, dict):
+            found.extend(cast(dict[str, Any], value))
+            found.extend(schema_text(list(cast(dict[str, Any], value).values())))
+        else:
+            found.extend(schema_text(value))
     return found
 
 
@@ -160,6 +173,16 @@ def annotated_result(result: CallToolResult) -> CallToolResult:
         for item in result.content
     ]
     return result.model_copy(update={"content": content})
+
+
+class ScreenedUpstreamError(Exception):
+    """An upstream's protocol error after screening: `error` is what the
+    agent may see, and `audit_fields` what the log records about it."""
+
+    def __init__(self, error: MCPError, audit_fields: dict[str, Any]) -> None:
+        super().__init__(error.error.code)
+        self.error = error
+        self.audit_fields = audit_fields
 
 
 class Route:
@@ -225,7 +248,17 @@ class Route:
         caller = self._caller(ctx)
         allowed = allowed_tools(self.config.policy_for(caller), self.name)
         upstream = await self.upstreams.for_session(session_id_of(ctx))
-        result = await upstream.session.list_tools(params=params)
+        try:
+            async with self._screening_errors():
+                result = await upstream.session.list_tools(params=params)
+        except ScreenedUpstreamError as exc:
+            self._try_append("list", decision="upstream_error", caller=caller, route=self.name, **exc.audit_fields)
+            raise exc.error from None
+        except Exception as exc:  # transport or protocol failure upstream
+            self._try_append(
+                "list", decision="upstream_error", caller=caller, route=self.name, error=type(exc).__name__
+            )
+            raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
         tools = [t for t in result.tools if t.name in allowed]
         with stage("screen_tools") as span:
             flagged = await self._screen_tools(tools)
@@ -238,28 +271,32 @@ class Route:
         seen. A detector failure hides the tool without caching it."""
         if not self.config.detector.scan_tool_descriptions:
             return set()
-        flagged: set[str] = set()
+        # By name: an upstream listing one name twice gets one verdict on both.
+        texts: dict[str, list[str]] = {}
         for tool in tools:
-            text = tool_text(tool)
+            texts.setdefault(tool.name, []).append(tool_text(tool))
+        flagged: set[str] = set()
+        for name, definitions in texts.items():
+            text = "\n".join(definitions)
             digest = hashlib.sha256(text.encode()).hexdigest()
-            cached = self._tool_verdicts.get(tool.name)
+            cached = self._tool_verdicts.get(name)
             if cached is None or cached[0] != digest:
                 try:
                     verdict = await self.detector.scan(text)
                 except Exception as exc:  # fail closed: hidden for now, not cached, so the next listing retries
                     reason = f"detector failed: {type(exc).__name__}"
                     self._try_append(
-                        "tool_flagged", route=self.name, tool=tool.name, definition_sha256=digest, reason=reason
+                        "tool_flagged", route=self.name, tool=name, definition_sha256=digest, reason=reason
                     )
-                    flagged.add(tool.name)
+                    flagged.add(name)
                     continue
                 cached = (digest, verdict.suspicious)
-                self._tool_verdicts[tool.name] = cached
+                self._tool_verdicts[name] = cached
                 if verdict.suspicious:
                     why = {"layer": verdict.layer, "matched": list(verdict.matched)}
-                    self._try_append("tool_flagged", route=self.name, tool=tool.name, definition_sha256=digest, **why)
+                    self._try_append("tool_flagged", route=self.name, tool=name, definition_sha256=digest, **why)
             if cached[1]:
-                flagged.add(tool.name)
+                flagged.add(name)
         return flagged
 
     async def _call_tool(self, ctx: ServerRequestContext[Any, Any], params: CallToolRequestParams) -> CallToolResult:
@@ -306,6 +343,9 @@ class Route:
             else:
                 try:
                     flagged = await self._tool_is_flagged(ctx, params.name)
+                except ScreenedUpstreamError as exc:
+                    self._try_append("call", decision="upstream_error", **exc.audit_fields, **record)
+                    raise exc.error from None
                 except MCPError as exc:  # e.g. a per-session route asked for without a session
                     self._try_append("call", decision="upstream_error", error=exc.error.message, **record)
                     raise
@@ -313,7 +353,7 @@ class Route:
                     self._try_append("call", decision="upstream_error", error=type(exc).__name__, **record)
                     raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
                 if flagged:
-                    verdict = Verdict(False, f"tool {params.name!r} hidden: its description looks like an injection")
+                    verdict = Verdict(False, f"tool {params.name!r} hidden: its definition failed screening")
                     mark(span, "tool_hidden")
         if not verdict.allowed:
             call_span.set_attribute("mcp_gateway.decision", "denied")
@@ -331,21 +371,7 @@ class Route:
             raise MCPError(INTERNAL_ERROR, "the gateway can't write its audit log, so the call was refused") from exc
 
         start = time.perf_counter()
-        try:
-            # Inside this span, so the SDK client parents the upstream request on it.
-            with stage("forward"):
-                upstream = await self.upstreams.for_session(session_id_of(ctx))
-                result = await upstream.session.call_tool(
-                    params.name, arguments, meta=cast(RequestParamsMeta, forwarded_meta)
-                )
-        except MCPError as exc:  # e.g. a per-session route asked for without a session
-            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
-            self._try_append("result", decision="upstream_error", error=exc.error.message, **_ids(record))
-            raise
-        except Exception as exc:  # transport or protocol failure upstream
-            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
-            self._try_append("result", decision="upstream_error", error=type(exc).__name__, **_ids(record))
-            raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
+        result = await self._forward(ctx, params.name, arguments, forwarded_meta, record, call_span)
         upstream_ms = (time.perf_counter() - start) * 1000
 
         with stage("detect") as span:
@@ -397,17 +423,84 @@ class Route:
             raise MCPError(INTERNAL_ERROR, "the gateway can't write its audit log, so the output was withheld") from exc
         return returned
 
+    async def _forward(
+        self,
+        ctx: ServerRequestContext[Any, Any],
+        tool: str,
+        arguments: dict[str, Any],
+        meta: dict[str, Any],
+        record: dict[str, Any],
+        call_span: trace.Span,
+    ) -> CallToolResult:
+        try:
+            # Inside this span, so the SDK client parents the upstream request on it.
+            with stage("forward"):
+                upstream = await self.upstreams.for_session(session_id_of(ctx))
+                async with self._screening_errors():
+                    return await upstream.session.call_tool(tool, arguments, meta=cast(RequestParamsMeta, meta))
+        except ScreenedUpstreamError as exc:
+            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
+            self._try_append("result", decision="upstream_error", **exc.audit_fields, **_ids(record))
+            raise exc.error from None
+        except MCPError as exc:  # e.g. a per-session route asked for without a session
+            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
+            self._try_append("result", decision="upstream_error", error=exc.error.message, **_ids(record))
+            raise
+        except Exception as exc:  # transport or protocol failure upstream
+            call_span.set_attribute("mcp_gateway.decision", "upstream_error")
+            self._try_append("result", decision="upstream_error", error=type(exc).__name__, **_ids(record))
+            raise MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed") from exc
+
+    @contextlib.asynccontextmanager
+    async def _screening_errors(self) -> AsyncIterator[None]:
+        """Around a request to the upstream: its protocol errors are untrusted
+        text, like its outputs, so they come out screened."""
+        try:
+            yield
+        except MCPError as exc:
+            raise await self._screen_error(exc) from exc
+
+    async def _screen_error(self, exc: MCPError) -> ScreenedUpstreamError:
+        """A clean error reaches the agent unchanged, since it's often what
+        the agent needs to correct a call. Anything else becomes a fixed
+        message. The log gets a hash either way: the text can't be trusted."""
+        text = "\n".join([exc.error.message, *string_leaves(exc.error.data)])
+        is_clean = await self._error_is_clean(text)
+        audit_fields = {
+            "error_code": exc.error.code,
+            "error_chars": len(text),
+            "error_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "error_withheld": not is_clean,
+        }
+        if is_clean:
+            return ScreenedUpstreamError(exc, audit_fields)
+        withheld = MCPError(UPSTREAM_ERROR, f"upstream {self.name!r} failed; its error message was withheld")
+        return ScreenedUpstreamError(withheld, audit_fields)
+
+    async def _error_is_clean(self, text: str) -> bool:
+        if len(text) > self.config.detector.scan_cap_chars:
+            return False
+        try:
+            return not (await self.detector.scan(text)).suspicious
+        except Exception:  # timeouts included: fail closed
+            return False
+
     async def _tool_is_flagged(self, ctx: ServerRequestContext[Any, Any], name: str) -> bool:
         """For a call: refuse a flagged tool even if the agent never listed
-        tools. Unscreened tools are screened on the spot."""
+        tools. Unscreened tools are screened on the spot, and a tool the
+        upstream no longer lists can't be, so it's refused too."""
         if not self.config.detector.scan_tool_descriptions:
             return False
         cached = self._tool_verdicts.get(name)
         if cached is not None:
             return cached[1]
         upstream = await self.upstreams.for_session(session_id_of(ctx))
-        listed = await upstream.session.list_tools()
-        return name in await self._screen_tools([t for t in listed.tools if t.name == name])
+        async with self._screening_errors():
+            listed = await list_all_tools(upstream)
+        definitions = [t for t in listed if t.name == name]
+        if not definitions:
+            return True
+        return name in await self._screen_tools(definitions)
 
     def _try_append(self, kind: str, **fields: Any) -> None:
         """For lines whose failure can't make things less safe (the call is

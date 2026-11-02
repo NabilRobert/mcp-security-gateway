@@ -1,22 +1,26 @@
 """Tool definitions are scanned like outputs (ADR-011): a tool whose
 description looks like an injection is hidden, and calls to it refused."""
 
+import contextlib
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, cast
 
 import pytest
 from conftest import KEY_A, agent, in_memory, make_config, running_gateway
-from mcp.server import MCPServer
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp import Client
+from mcp.server import MCPServer, Server
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
 from pydantic import Field
 from test_detection import INJECTION
 
 from mcp_gateway.audit import AuditLog
 from mcp_gateway.config import GatewayConfig
 from mcp_gateway.detect import DetectorVerdict, RulesDetector
-from mcp_gateway.proxy import Route
+from mcp_gateway.proxy import Route, tool_text
+from mcp_gateway.upstreams import list_all_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -86,11 +90,139 @@ async def test_a_flagged_tool_is_refused_even_if_never_listed(tmp_path: Path) ->
     async with running_gateway(cfg, connect(upstream)) as base, agent(f"{base}/mcp/fake/", KEY_A) as client:
         refused = await client.session.call_tool("poisoned", {})
         allowed = await client.session.call_tool("safe", {})
-    assert refused.is_error and "hidden: its description looks like an injection" in text(refused)
+    assert refused.is_error and "hidden" in text(refused)
     assert not allowed.is_error
     assert upstream.calls == ["safe"]
     denied = [line for line in audit(cfg) if line.get("decision") == "denied"]
     assert [line["tool"] for line in denied] == ["poisoned"]
+
+
+def paged_upstream(calls: list[str], pages: dict[str | None, tuple[list[Tool], str | None]]) -> Server:
+    async def list_tools(ctx: Any, params: Any) -> ListToolsResult:  # noqa: ARG001
+        tools, next_cursor = pages[params.cursor if params else None]
+        return ListToolsResult(tools=tools, next_cursor=next_cursor)
+
+    async def call_tool(ctx: Any, params: Any) -> CallToolResult:  # noqa: ARG001
+        calls.append(params.name)
+        return CallToolResult(content=[TextContent(type="text", text="ran")])
+
+    return Server("paged", on_list_tools=list_tools, on_call_tool=call_tool)
+
+
+def connect_to(server: Server) -> Any:
+    @contextlib.asynccontextmanager
+    async def connect(name: str, upstream: Any) -> AsyncIterator[Client]:  # noqa: ARG001
+        async with Client(server) as client:
+            yield client
+
+    return connect
+
+
+def plain_tool(name: str, description: str = "A normal tool.") -> Tool:
+    return Tool(name=name, description=description, input_schema={"type": "object", "properties": {}})
+
+
+async def test_a_call_is_screened_against_every_page_of_tools(tmp_path: Path) -> None:
+    calls: list[str] = []
+    first_page = [plain_tool("safe"), plain_tool("poisoned_param")]
+    pages = {None: (first_page, "2"), "2": ([plain_tool("poisoned", INJECTION)], None)}
+    cfg = config(tmp_path)
+    async with (
+        running_gateway(cfg, connect_to(paged_upstream(calls, pages))) as base,
+        agent(f"{base}/mcp/fake/", KEY_A) as client,
+    ):
+        refused = await client.session.call_tool("poisoned", {})
+    assert refused.is_error and calls == []
+
+
+async def test_a_clean_tool_on_a_later_page_still_works(tmp_path: Path) -> None:
+    calls: list[str] = []
+    first_page = [plain_tool("poisoned"), plain_tool("poisoned_param")]
+    pages = {None: (first_page, "2"), "2": ([plain_tool("safe")], None)}
+    cfg = config(tmp_path)
+    async with (
+        running_gateway(cfg, connect_to(paged_upstream(calls, pages))) as base,
+        agent(f"{base}/mcp/fake/", KEY_A) as client,
+    ):
+        result = await client.session.call_tool("safe", {})
+    assert not result.is_error and calls == ["safe"]
+
+
+async def test_a_tool_the_upstream_stops_listing_is_refused(tmp_path: Path) -> None:
+    """The start-up check saw it; a later listing doesn't, so it can't be screened."""
+    calls: list[str] = []
+    listings: list[int] = []
+    full = [plain_tool("safe"), plain_tool("poisoned"), plain_tool("poisoned_param")]
+
+    async def list_tools(ctx: Any, params: Any) -> ListToolsResult:  # noqa: ARG001
+        listings.append(1)
+        return ListToolsResult(tools=full if len(listings) == 1 else [plain_tool("safe")])
+
+    async def call_tool(ctx: Any, params: Any) -> CallToolResult:  # noqa: ARG001
+        calls.append(params.name)
+        return CallToolResult(content=[TextContent(type="text", text="ran")])
+
+    server = Server("shrinks", on_list_tools=list_tools, on_call_tool=call_tool)
+    cfg = config(tmp_path)
+    async with running_gateway(cfg, connect_to(server)) as base, agent(f"{base}/mcp/fake/", KEY_A) as client:
+        refused = await client.session.call_tool("poisoned", {})
+    assert refused.is_error and calls == []
+
+
+async def test_endless_tool_pages_are_an_upstream_failure_not_a_hang() -> None:
+    class Endless:
+        async def list_tools(self, params: Any = None) -> ListToolsResult:  # noqa: ARG002
+            return ListToolsResult(tools=[], next_cursor="again")
+
+    client: Any = type("EndlessClient", (), {"session": Endless()})()
+    with pytest.raises(RuntimeError, match="pages"):
+        await list_all_tools(client)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        Tool(name="t", input_schema={"properties": {"q": {"type": "string", "title": INJECTION}}}),
+        Tool(name="t", input_schema={"properties": {"q": {"type": "string", "default": INJECTION}}}),
+        Tool(name="t", input_schema={"properties": {"q": {"enum": ["a", INJECTION]}}}),
+        Tool(name="t", input_schema={"properties": {"q": {"default": {"type": INJECTION}}}}),
+        Tool(name="t", input_schema={"properties": {"q": {"examples": [{"note": INJECTION}]}}}),
+        Tool(name="t", input_schema={"properties": {INJECTION: {"type": "string"}}}),
+        Tool(name="t", input_schema={}, output_schema={"properties": {"r": {"description": INJECTION}}}),
+        Tool(name="t", input_schema={}, annotations=ToolAnnotations(title=INJECTION)),
+        Tool(name=INJECTION, input_schema={}),
+    ],
+    ids=[
+        "title",
+        "default",
+        "enum",
+        "default_object",
+        "examples",
+        "property_name",
+        "output_schema",
+        "annotation_title",
+        "name",
+    ],
+)
+def test_every_text_a_model_reads_in_a_definition_is_screened(tool: Tool) -> None:
+    assert INJECTION in tool_text(tool)
+
+
+async def test_one_name_listed_twice_gets_one_verdict_on_both(tmp_path: Path) -> None:
+    r = route(tmp_path, RulesDetector())
+    twins = [plain_tool("twin", INJECTION), plain_tool("twin")]
+    assert await r._screen_tools(twins) == {"twin"}  # pyright: ignore[reportPrivateUsage]
+    assert await r._screen_tools(twins) == {"twin"}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_schema_keywords_are_not_read_as_text() -> None:
+    schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["limit"],
+        "properties": {"limit": {"type": "integer", "format": "int32", "$ref": "#/$defs/n"}},
+    }
+    assert tool_text(Tool(name="lookup", input_schema=schema)) == "lookup\nlimit"
 
 
 async def test_scanning_off_passes_definitions_through(tmp_path: Path) -> None:
@@ -167,4 +299,4 @@ async def test_the_scan_reads_title_description_and_schema_descriptions(tmp_path
         input_schema={"properties": {"a": {"description": "Param A"}, "b": {"items": [{"description": "Nested B"}]}}},
     )
     await r._screen_tools([tool])  # pyright: ignore[reportPrivateUsage]
-    assert detector.scanned == ["Title here\nDescription here\nParam A\nNested B"]
+    assert detector.scanned == ["t\nTitle here\nDescription here\na\nb\nParam A\nNested B"]
