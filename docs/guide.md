@@ -61,6 +61,9 @@ sequenceDiagram
    (`proxy.py: end_to_end_meta`). The authenticated caller is written under
    `io.github.nabilrobert.mcp-gateway/caller`, replacing anything the client
    put there.
+   If the upstream answers with a protocol error instead, that's untrusted
+   text too: `Route._screen_error` scans it, passes a clean one on unchanged
+   and replaces anything else with a fixed message.
 6. **Scan the result.** `proxy.py: scan_text` collects the text to scan:
    the text blocks plus the string values of structured content. JSON text
    is unwrapped first (`detect.py: text_for_scanning`), because the
@@ -119,13 +122,15 @@ flowchart LR
 ```
 
 - `Route._list_tools` filters the upstream's tools by policy, then
-  `Route._screen_tools` scans each one's title, description and parameter
-  descriptions (`proxy.py: tool_text`) with the same detector.
+  `Route._screen_tools` scans everything a model can read of each one
+  (`proxy.py: tool_text`) with the same detector: its name, titles,
+  description and the text in its schemas.
 - A flagged tool is hidden and gets one `tool_flagged` audit line. Verdicts
   are cached by the definition's hash, so a changed description is scanned
   again.
 - `Route._tool_is_flagged` refuses calls to a flagged tool, even if the
-  agent never listed tools.
+  agent never listed tools. It screens against every page of the upstream's
+  tools (`upstreams.py: list_all_tools`), and refuses a tool it can't find.
 
 ## Start-up and shutdown
 
@@ -180,7 +185,7 @@ flowchart LR
 
 ## Known gaps
 
-Some paths around the scanner, the tool screening and session binding are
+Some paths around the scanner and session binding are
 open. They're reported privately, and the details stay out of this public
 guide until they're fixed. Until then, read "scan" and "refuse" above as
 covering the normal paths, not every path.

@@ -25,7 +25,6 @@ from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
-from mcp.types import PaginatedRequestParams, Tool
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -38,7 +37,7 @@ from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDe
 from mcp_gateway.proxy import Route
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.tracing import configure_tracing, shutdown_tracing
-from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream
+from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream, list_all_tools
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
 
@@ -57,17 +56,6 @@ async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) ->
         Client(streamable_http_client(upstream.url, http_client=http)) as client,
     ):
         yield client
-
-
-async def list_all_tools(client: Client) -> list[Tool]:
-    tools: list[Tool] = []
-    cursor: str | None = None
-    while True:
-        page = await client.session.list_tools(params=PaginatedRequestParams(cursor=cursor))
-        tools.extend(page.tools)
-        cursor = page.next_cursor
-        if cursor is None:
-            return tools
 
 
 async def open_routes(

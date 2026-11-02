@@ -174,6 +174,7 @@ FS_TOOLS = [
 BACKBONE_TOOLS = ["list_tables", "describe_table", "sample_rows", "run_query"]
 
 
+@pytest.mark.timeout(300)  # replays 120 real calls, twice each
 @pytest.mark.skipif(not LOCAL, reason="set MCP_GATEWAY_LOCAL_TESTS=1 (needs the harness repro stack and fs server)")
 async def test_recorded_calls_replay_identically_against_the_real_servers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -209,6 +210,8 @@ async def test_recorded_calls_replay_identically_against_the_real_servers(
                 },
                 "echo-only": {"routes": {}},
             },
+            # Detection off: this is about the proxy, and the fixture holds a planted injection.
+            "detector": {"rules": False},
         }
     )
     async with running_gateway(config, connect_upstream) as base:

@@ -22,10 +22,26 @@ import anyio
 from anyio.abc import TaskGroup
 from mcp import Client
 from mcp.shared.exceptions import MCPError
+from mcp.types import PaginatedRequestParams, Tool
 from mcp_types.jsonrpc import INVALID_REQUEST
 
 IDLE_TIMEOUT_S = 30 * 60  # the SDK's DEFAULT_SESSION_IDLE_TIMEOUT
 REAP_EVERY_S = 60.0
+MAX_TOOL_PAGES = 100
+
+
+async def list_all_tools(client: Client) -> list[Tool]:
+    """Every tool, across pages. The page cap is there because the cursor
+    comes from the upstream, which isn't trusted to ever stop sending one."""
+    tools: list[Tool] = []
+    cursor: str | None = None
+    for _ in range(MAX_TOOL_PAGES):
+        page = await client.session.list_tools(params=PaginatedRequestParams(cursor=cursor))
+        tools.extend(page.tools)
+        cursor = page.next_cursor
+        if cursor is None:
+            return tools
+    raise RuntimeError(f"upstream sent more than {MAX_TOOL_PAGES} pages of tools")
 
 
 class Upstreams(Protocol):
