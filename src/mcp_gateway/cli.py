@@ -59,7 +59,7 @@ def verify_log(path: Path) -> None:
 
 
 @app.command("eval-detector")
-def eval_detector(
+def eval_detector(  # noqa: PLR0913 (each parameter is a command-line option; Typer reads them from here)
     split: Annotated[str, typer.Option(help="dev to tune; test is scored once per detector version")] = "dev",
     rules: Annotated[bool, typer.Option(help="use the rules layer")] = True,
     model_dir: Annotated[Path | None, typer.Option(help="the model's directory; omit for rules only")] = None,

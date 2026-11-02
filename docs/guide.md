@@ -33,18 +33,20 @@ sequenceDiagram
    any MCP code, as Starlette middleware set up in `app.py: build_app`. It
    hashes the Bearer key and compares it, in constant time, with every
    caller's `key_sha256` in the config. A wrong or missing key gets a 401,
-   and `app.py: build_app`'s `on_reject` writes a `denied` line with only
-   the key's fingerprint.
+   and `app.py: _audit_rejected_key` writes a `denied` line with only the
+   key's fingerprint.
 2. **Route and session.** `build_app` mounts one MCP app per upstream at
    `/mcp/<route>/`; each one is a `proxy.py: Route`, built in
-   `app.py: open_routes`. `app.py: SessionGuard` binds a session (its
+   `app.py: open_routes`. `sessions.py: SessionGuard` binds a session (its
    `Mcp-Session-Id`) to the key that opened it, and answers any other key
    with a 404 before the MCP SDK sees the request. The SDK then calls
-   `Route._call_tool`, and `Route._caller` reads the caller the auth step
-   found.
+   `Route._call_tool`, a short pipeline of the steps below. `Route._caller`
+   reads the caller the auth step found, and `calls.py: start_call` gathers
+   what every audit line about this call will carry.
 3. **Rate limit, then policy.**
    - `ratelimit.py: CallLimiter.take` counts the call against the key's
-     `rate_limit`, if it has one. It runs first, so denied calls count too.
+     `rate_limit`, if it has one (`Route._rate_limit_refusal`). It runs
+     first, so denied calls count too.
    - `policy.py: check_call` checks the route, the tool and each argument
      against the caller's policy. Path arguments are resolved before a
      prefix check (`policy.py: path_within`).
@@ -52,35 +54,36 @@ sequenceDiagram
      an injection (see "Tool-description screening" below).
 4. **Write the "call" line.** `audit.py: AuditLog.append` writes a
    `forwarding` line before anything is sent, with the arguments, hiding
-   any field whose name looks like a secret (`proxy.py: redact`). If the
+   any field whose name looks like a secret (`calls.py: redact`). If the
    log can't be written, the call is refused: nothing happens that isn't
    recorded.
-5. **Forward.** `upstreams.py` picks the client: one shared connection
+5. **Forward.** `Route._forward` asks `upstreams.py` for the client: one shared connection
    (`SharedUpstream`), or one process per session for stateful stdio
    servers (`PerSessionUpstreams`). The call's `_meta` goes along, minus
    the keys that belong to the agent's own connection
-   (`proxy.py: end_to_end_meta`). The authenticated caller is written under
+   (`calls.py: end_to_end_meta`). The authenticated caller is written under
    `io.github.nabilrobert.mcp-gateway/caller`, replacing anything the client
    put there.
    If the upstream answers with a protocol error instead, that's untrusted
-   text too: `Route._screen_error` scans it, passes a clean one on unchanged
+   text too: `outputs.py: screen_error` scans it, passes a clean one on unchanged
    and replaces anything else with a fixed message.
-6. **Scan the result.** `proxy.py: scan_text` collects the text to scan:
+6. **Scan the result.** `outputs.py: inspect_output` runs this step.
+   `outputs.py: scan_text` collects the text to scan:
    the text blocks plus the string values of structured content. JSON text
    is unwrapped first (`detect.py: text_for_scanning`), because the
    classifier reacts to JSON syntax itself. JSON keys that read like prose
    (`detect.py: reads_like_prose`) are scanned as a second, separate text
    (`detect.py: scan_output`): mixed in with the values they weaken the
    model's verdict, and it misreads a bare list of field names.
-   - `proxy.py: _unscanned_reason` blocks what can't be read (images,
+   - `outputs.py: unscanned_reason` blocks what can't be read (images,
      audio, text past the scan cap), unless the policy allows it.
    - `detect.py: LayeredDetector.scan` runs the layers in order and stops
      at the first flag. `detect.py: RulesDetector.scan` matches the patterns
      in `rules/injection.yaml`. `detect.py: ModelDetector.scan` runs
      ProtectAI's classifier in 512-token windows, under a 2 s timeout. An
      output needing more than `max_windows` windows is flagged unread.
-   - A flagged output is blocked (`proxy.py: blocked_result`), annotated as
-     untrusted (`proxy.py: annotated_result`) or only logged, as the
+   - A flagged output is blocked (`outputs.py: blocked_result`), annotated as
+     untrusted (`outputs.py: annotated_result`) or only logged, as the
      policy's `on_suspicious` says. A detector error or timeout blocks it.
 7. **Write the "result" line,** with the decision, the detector's verdict
    and a hash of the output (never the output itself), then answer the
@@ -106,7 +109,7 @@ flowchart LR
 
 - `policy.py: check_call` returns a `Verdict` with a reason, such as
   `tool 'run_query' not allowed`.
-- `Route._call_tool` writes a `denied` line with that reason and returns
+- `Route._policy_refusal` writes a `denied` line with that reason and returns
   an error result to the agent. The upstream never sees the call.
 - Tools a caller isn't allowed don't appear in its `tools/list` either
   (`policy.py: allowed_tools`).
@@ -126,8 +129,8 @@ flowchart LR
 ```
 
 - `Route._list_tools` filters the upstream's tools by policy, then
-  `Route._screen_tools` scans everything a model can read of each one
-  (`proxy.py: tool_text`) with the same detector: its name, titles,
+  `tool_screen.py: ToolScreen.flagged` scans everything a model can read of
+  each one (`tool_screen.py: tool_text`) with the same detector: its name, titles,
   description and the text in its schemas.
 - A flagged tool is hidden and gets one `tool_flagged` audit line. Verdicts
   are cached by the definition's hash, so a changed description is scanned
@@ -172,13 +175,13 @@ flowchart LR
 | ONNX, onnxruntime | A file format for models, and the library that runs them on the CPU without PyTorch | `detect.py: ModelDetector` |
 | Threshold | The model's score at or above which text is flagged (0.999 in the example config) | `config.py: ModelSettings` |
 | Window | A 512-token slice of text, overlapping the next by 64; long outputs are scanned window by window | `detect.py: ModelDetector.windows` |
-| Fail closed | When a check can't run (a detector error, a timeout, an unwritable log), the call is refused rather than let through | `proxy.py: Route._call_tool` |
+| Fail closed | When a check can't run (a detector error, a timeout, an unwritable log), the call is refused rather than let through | `proxy.py: Route._write_call_line`, `outputs.py: inspect_output` |
 | Scan cap | Text longer than this isn't scanned, so it's blocked | `config.py: DetectorSettings.scan_cap_chars` |
-| Spotlighting | Marking an output as untrusted data instead of blocking it (`on_suspicious: annotate`), inside markers that are random per result | `proxy.py: annotated_result` |
+| Spotlighting | Marking an output as untrusted data instead of blocking it (`on_suspicious: annotate`), inside markers that are random per result | `outputs.py: annotated_result` |
 | Audit log | Append-only JSONL: a line before each call and one after | `audit.py: AuditLog` |
 | Hash chain | Each audit line carries the hash of the one before, so edits show; `mcp-gateway verify-log` checks it | `audit.py: verify_log` |
-| `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded except for the agent's own connection keys | `proxy.py: end_to_end_meta` |
-| Caller stamp | The authenticated caller, added to `_meta` so an upstream can trust who called | `proxy.py: CALLER_META_KEY` |
+| `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded except for the agent's own connection keys | `calls.py: end_to_end_meta` |
+| Caller stamp | The authenticated caller, added to `_meta` so an upstream can trust who called | `calls.py: CALLER_META_KEY` |
 | Rate limit | A cap on a key's calls per moving window, across all routes. Counts are in memory, so a restart resets them | `ratelimit.py: CallLimiter` |
 | Stdio, HTTP upstream | Stdio: the gateway starts the server as a child process. HTTP: it connects to one already running | `config.py: StdioUpstream`, `HttpUpstream` |
 | Span, trace | One timed step, and the tree of steps for one request (OpenTelemetry) | `tracing.py` |

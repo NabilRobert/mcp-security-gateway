@@ -82,46 +82,55 @@ def wait_healthy(timeout_s: float = 60) -> None:
     raise SystemExit("the gateway didn't become healthy")
 
 
+def write_config(name: str, key: str, run_dir: Path) -> Path:
+    """The gateway runs from a private copy with real paths; the committed copy
+    names paths relative to the workspace, so no local home directory is
+    published."""
+    config_text = yaml.safe_dump(config_for(name, key), sort_keys=False)
+    config_path = Path(tempfile.mkdtemp(prefix="gullible-")) / "gateway.yaml"
+    config_path.write_text(config_text)
+    (run_dir / "gateway.yaml").write_text(config_text.replace(str(ROOT.parent) + "/", "<workspace>/"))
+    return config_path
+
+
+# Every subprocess here runs a fixed local command (this repo's gateway, the
+# harness's script through uv), never input from outside.
+def run_gullible_agent(key: str, run_dir: Path) -> None:
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607 (uv on PATH, as the README's commands assume)
+            "uv",
+            "run",
+            "--directory",
+            str(HARNESS),
+            "python",
+            "scripts/gullible_agent.py",
+            "--target",
+            "filesystem-attacks-gateway",
+            "--json",
+            str(run_dir / "results.json"),
+        ],
+        env={**os.environ, "MCP_GATEWAY_KEY": key},
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    print(result.stdout.strip().splitlines()[-1] if result.stdout.strip() else result.stderr[-2000:])
+
+
 def run(name: str) -> list[dict[str, Any]]:
     key = secrets.token_urlsafe(32)
     run_dir = OUT / name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "audit.jsonl").unlink(missing_ok=True)
-    # The gateway runs from a private copy with real paths; the committed copy
-    # names paths relative to the workspace, so no local home directory is
-    # published.
-    config_text = yaml.safe_dump(config_for(name, key), sort_keys=False)
-    config_path = Path(tempfile.mkdtemp(prefix="gullible-")) / "gateway.yaml"
-    config_path.write_text(config_text)
-    (run_dir / "gateway.yaml").write_text(config_text.replace(str(ROOT.parent) + "/", "<workspace>/"))
-    # Every subprocess here runs a fixed local command (this repo's gateway,
-    # the harness's script through uv), never input from outside.
+    config_path = write_config(name, key, run_dir)
     gateway = subprocess.Popen(  # noqa: S603
         [str(ROOT / ".venv/bin/mcp-gateway"), "serve", "--config", str(config_path), "--port", str(PORT)],
         stderr=(run_dir / "gateway.stderr").open("w"),
     )
     try:
         wait_healthy()
-        result = subprocess.run(  # noqa: S603
-            [  # noqa: S607 (uv on PATH, as the README's commands assume)
-                "uv",
-                "run",
-                "--directory",
-                str(HARNESS),
-                "python",
-                "scripts/gullible_agent.py",
-                "--target",
-                "filesystem-attacks-gateway",
-                "--json",
-                str(run_dir / "results.json"),
-            ],
-            env={**os.environ, "MCP_GATEWAY_KEY": key},
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
-        )
-        print(result.stdout.strip().splitlines()[-1] if result.stdout.strip() else result.stderr[-2000:])
+        run_gullible_agent(key, run_dir)
     finally:
         gateway.terminate()
         gateway.wait(timeout=30)
