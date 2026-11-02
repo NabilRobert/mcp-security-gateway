@@ -172,7 +172,7 @@ def build_detector(settings: DetectorSettings) -> Detector:
     return LayeredDetector(layers) if layers else StubDetector()
 
 
-async def serve(
+async def serve(  # noqa: PLR0913 (the CLI and the tests call it by these keywords)
     config: GatewayConfig,
     *,
     host: str = "127.0.0.1",

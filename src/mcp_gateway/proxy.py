@@ -66,7 +66,7 @@ def _refused(message: str) -> CallToolResult:
 
 
 class Route:
-    def __init__(
+    def __init__(  # noqa: PLR0913 (a route's collaborators, shared by every route, are built in `app.py`)
         self,
         name: str,
         upstreams: Upstreams,
