@@ -84,6 +84,11 @@ async def test_a_flagged_error_data_field_is_withheld_too(tmp_path: Path) -> Non
     assert WITHHELD in error.error.message and error.error.data is None
 
 
+async def test_a_flagged_key_in_error_data_is_withheld_too(tmp_path: Path) -> None:
+    error = await error_from_call(config(tmp_path), failing_upstream(CLEAN_MESSAGE, {INJECTION: 1}))
+    assert WITHHELD in error.error.message
+
+
 async def test_an_upstream_error_is_withheld_when_the_detector_fails(tmp_path: Path) -> None:
     data = config(tmp_path).model_dump(mode="json")
     data["detector"]["scan_tool_descriptions"] = False  # else the tool is hidden before the call
