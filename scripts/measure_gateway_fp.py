@@ -81,7 +81,7 @@ async def main() -> int:
         shutil.rmtree(work, ignore_errors=True)
 
     limited = sum(c["rate_limited"] for c in counts.values())
-    summary: dict[str, Any] = {"detector": "rules + model (fp32, threshold 0.999, 2 s timeout, scan s2)"}
+    summary: dict[str, Any] = {"detector": "rules + model (fp32, threshold 0.999, 2 s timeout, scan s5)"}
     for route, c in counts.items():
         summary[route] = {
             **c,
