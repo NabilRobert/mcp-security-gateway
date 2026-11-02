@@ -48,7 +48,8 @@ servers.
 - **Denial of service beyond one key's calls.** Many keys, unauthenticated
   floods and slow requests are left to whatever sits in front of the
   gateway. Each failed login also writes an audit line, so a flood of them
-  grows the log.
+  grows the log. That is accepted for now: losing security records would be
+  worse than the small growth. A rate limit on failed logins is the later fix.
 - **Resources, prompts, sampling and elicitation.** The gateway proxies
   tools only and advertises nothing else.
 - **A compromised gateway host,** or a malicious operator.
