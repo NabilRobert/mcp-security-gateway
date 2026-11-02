@@ -164,7 +164,7 @@ class GatewayConfig(_Model):
         return self.policies[self.callers[caller_id].policy]
 
     def policy_hash(self) -> str:
-        """SHA-256 of the canonical config, recorded with every audit line."""
+        """SHA-256 of the canonical config, recorded on `start` and `call` lines."""
         canonical = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 

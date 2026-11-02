@@ -1,4 +1,4 @@
-"""`mcp-gateway serve | hash-key | verify-log`, on Typer.
+"""`mcp-gateway serve | hash-key | verify-log | eval-detector`, on Typer.
 
 Exit codes: 0 ok, 1 the log doesn't verify, 2 the gateway can't start (bad
 config, unreachable upstream). Options can also come from `MCP_GATEWAY_*`
