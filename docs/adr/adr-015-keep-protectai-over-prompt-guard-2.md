@@ -15,7 +15,8 @@
 | Prompt Guard 2 22M, threshold 0.99 | 0.9% FP, 19.3% recall | 146 ms | Rejected |
 | Prompt Guard 2 86M, threshold 0.999 | 2.1% FP, 18.5% recall | 439 ms | Rejected |
 
-The rules alone catch 14.6% on test, so Prompt Guard 2 adds about 4–5
+Measured at scan `s2`; ProtectAI is now at 1.1% false positives with the same
+recall (ADR-005). The rules alone catch 14.6% on test, so Prompt Guard 2 adds about 4–5
 points over them, where ProtectAI adds 35.
 
 **Decision (Arthur, 2026-10-29: "keep ProtectAI"):** ProtectAI v2 stays

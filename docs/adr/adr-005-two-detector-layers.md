@@ -97,4 +97,39 @@ change.
 fewer unseen injections, so ProtectAI stays. See
 [ADR-015](adr-015-keep-protectai-over-prompt-guard-2.md).
 
+**JSON keys that read like prose are scanned, on their own (2026-11-02, scan
+`s5`):** a JSON output was reduced to its string values, so its keys were never
+read. Three attempts:
+
+- `s3` added the keys to that text. Test recall fell from 49.7% to 41.0%: the
+  extra tokens diluted the model's windows, so real injections fell under
+  0.999. The rules-plus-model dev score hid it, because the rules catch all
+  of dev, so changes to scanning are now checked on the model alone first.
+- `s4` scanned every key as a separate text. Recall held and no benign output in
+  the labelled set was flagged, but a bare list of field names (`flags`,
+  `new_checkout`, `dark_mode`, `owner`, `note`) scored 0.99999, because it isn't
+  text the classifier was trained on. That blocked one gullible-agent attack by
+  accident, and would block the same harmless file. Dropped.
+- `s5` leaves the value text as it was and scans, as a second text, only the
+  keys that read like prose: four or more words (split on spaces, `_`, `-` and
+  camelCase), or non-ASCII. Ordinary field names cost no second scan.
+
+| Held-out test | False positives | Recall | Precision |
+|---|---|---|---|
+| Rules (`s5`) | 0.0% | 14.6% | 100% |
+| Rules + model (`s5`) | 1.1% | 49.7% | 96.3% |
+| Rules + model (`s2`, before) | 1.2% | 49.7% | 96.0% |
+
+- Recall is unchanged in every family; the one fewer false positive is one
+  fewer timeout.
+- The test split was scored for all three attempts, which bends its
+  scored-once rule, so it's recorded here. `s3`'s drop was seen on test, and
+  led to `s4`. `s5` came from the gullible run. No threshold or rule was tuned
+  on test, and `s5` was held to dev first, with the model alone.
+- The threshold rule still gives 0.999: on dev, rules + model has 1.5% false
+  positives there, and 10.3% at 0.995.
+- Through the gateway: 2.5%, as before. The gullible agent: 5/12, as predicted.
+- **Limit:** a key of up to three ASCII words isn't read by the model. Three
+  words is little room for an instruction, but it isn't none.
+
 Part of the [architecture decisions](README.md) (Phase 5).

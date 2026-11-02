@@ -38,7 +38,7 @@ from opentelemetry import trace
 from mcp_gateway.audit import AuditError, AuditLog
 from mcp_gateway.auth import CallerUser
 from mcp_gateway.config import GatewayConfig
-from mcp_gateway.detect import Detector, string_leaves
+from mcp_gateway.detect import Detector, json_keys, keys_for_scanning, prose_keys, scan_output, string_leaves
 from mcp_gateway.policy import Verdict, allowed_tools, check_call
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.tracing import mark, stage
@@ -115,7 +115,7 @@ def schema_text(schema: Any) -> list[str]:
         if key in SCHEMA_STRUCTURE_KEYWORDS:
             continue
         if key in SCHEMA_DATA_KEYWORDS:
-            found.extend(string_leaves(value))
+            found.extend([*string_leaves(value), *json_keys(value)])
         elif key in SCHEMA_NAME_KEYWORDS and isinstance(value, dict):
             found.extend(cast(dict[str, Any], value))
             found.extend(schema_text(list(cast(dict[str, Any], value).values())))
@@ -139,6 +139,12 @@ def scan_text(result: CallToolResult) -> str:
     if result.structured_content:
         parts.extend(s for s in string_leaves(result.structured_content) if s not in text)
     return "\n".join(p for p in parts if p)
+
+
+def output_keys(result: CallToolResult) -> str:
+    """The prose keys of an output's JSON text and structured content."""
+    keys = [*keys_for_scanning(text_of(result)).splitlines(), *prose_keys(result.structured_content)]
+    return "\n".join(dict.fromkeys(keys))
 
 
 def _unscanned_reason(result: CallToolResult, text: str, cap: int) -> str | None:
@@ -385,7 +391,7 @@ class Route:
                 fields["reason"] = f"unscanned: {unscanned}"
             else:
                 try:
-                    verdict = await self.detector.scan(text)
+                    verdict = await scan_output(self.detector, text, output_keys(result))
                 except Exception as exc:  # timeouts included: fail closed
                     verdict = None
                     fields["reason"] = f"detector failed: {type(exc).__name__}"
@@ -464,7 +470,7 @@ class Route:
         """A clean error reaches the agent unchanged, since it's often what
         the agent needs to correct a call. Anything else becomes a fixed
         message. The log gets a hash either way: the text can't be trusted."""
-        text = "\n".join([exc.error.message, *string_leaves(exc.error.data)])
+        text = "\n".join([exc.error.message, *string_leaves(exc.error.data), *json_keys(exc.error.data)])
         is_clean = await self._error_is_clean(text)
         audit_fields = {
             "error_code": exc.error.code,

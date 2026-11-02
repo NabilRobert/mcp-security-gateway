@@ -8,31 +8,31 @@
       "pagila (HTTP \u2192 HTTP)": {
         "calls_timed": 180,
         "direct_ms": {
-          "p50": 27.67,
-          "p95": 62.55
+          "p50": 22.65,
+          "p95": 52.3
         },
         "gateway_ms": {
-          "p50": 36.98,
-          "p95": 66.24
+          "p50": 31.62,
+          "p95": 63.12
         },
         "added_ms": {
-          "p50": 8.39,
-          "p95": 14.97
+          "p50": 8.91,
+          "p95": 11.43
         }
       },
       "filesystem (stdio \u2192 HTTP)": {
         "calls_timed": 180,
         "direct_ms": {
-          "p50": 2.07,
-          "p95": 2.71
+          "p50": 2.05,
+          "p95": 2.68
         },
         "gateway_ms": {
-          "p50": 4.73,
-          "p95": 5.49
+          "p50": 4.83,
+          "p95": 5.57
         },
         "added_ms": {
-          "p50": 2.65,
-          "p95": 2.93
+          "p50": 2.79,
+          "p95": 3.06
         }
       },
       "decisions": {
@@ -44,31 +44,31 @@
       "pagila (HTTP \u2192 HTTP)": {
         "calls_timed": 180,
         "direct_ms": {
-          "p50": 24.56,
-          "p95": 55.29
+          "p50": 22.9,
+          "p95": 50.88
         },
         "gateway_ms": {
-          "p50": 33.03,
-          "p95": 64.9
+          "p50": 33.49,
+          "p95": 60.87
         },
         "added_ms": {
-          "p50": 8.93,
-          "p95": 14.96
+          "p50": 9.34,
+          "p95": 12.1
         }
       },
       "filesystem (stdio \u2192 HTTP)": {
         "calls_timed": 180,
         "direct_ms": {
-          "p50": 2.07,
-          "p95": 2.67
+          "p50": 2.1,
+          "p95": 2.66
         },
         "gateway_ms": {
-          "p50": 4.81,
-          "p95": 6.2
+          "p50": 5.0,
+          "p95": 6.35
         },
         "added_ms": {
-          "p50": 2.74,
-          "p95": 4.15
+          "p50": 2.93,
+          "p95": 4.08
         }
       },
       "decisions": {
@@ -81,37 +81,37 @@
       "pagila (HTTP \u2192 HTTP)": {
         "calls_timed": 180,
         "direct_ms": {
-          "p50": 35.39,
-          "p95": 73.13
+          "p50": 30.65,
+          "p95": 64.48
         },
         "gateway_ms": {
-          "p50": 61.68,
-          "p95": 1103.62
+          "p50": 57.54,
+          "p95": 1154.44
         },
         "added_ms": {
-          "p50": 18.04,
-          "p95": 1078.22
+          "p50": 20.85,
+          "p95": 1129.89
         }
       },
       "filesystem (stdio \u2192 HTTP)": {
         "calls_timed": 180,
         "direct_ms": {
-          "p50": 5.13,
-          "p95": 21.68
+          "p50": 4.27,
+          "p95": 7.63
         },
         "gateway_ms": {
-          "p50": 93.52,
-          "p95": 2025.54
+          "p50": 60.3,
+          "p95": 2012.74
         },
         "added_ms": {
-          "p50": 86.58,
-          "p95": 2020.4
+          "p50": 54.7,
+          "p95": 2007.72
         }
       },
       "decisions": {
-        "files: allowed": 197,
+        "files: allowed": 201,
         "files: blocked": 8,
-        "files: gateway_error": 35,
+        "files: gateway_error": 31,
         "pagila: allowed": 238,
         "pagila: gateway_error": 2
       }

@@ -113,6 +113,16 @@ After the fix (one scan at a time, timed-out scans stopped, repeated text
 scanned once), it blocks **2.5%** of held-out normal outputs. That is still
 twice the offline figure, because large outputs time out on a laptop CPU.
 
+*Later (2026-11-02):* closing a gap in JSON keys took three tries. Adding the
+keys to the text the model reads cut its recall from 49.7% to 41.0%. Scanning
+all keys separately kept the recall, but a bare list of ordinary field names
+scored 0.99999 on the classifier, and that blocked one attack by accident: the
+gullible run's 5/12 became 4/12 for the wrong reason. Scanning only keys that
+read like prose kept every number: 49.7% recall, 1.1% false positives offline
+and 2.5% through the gateway, 5/12 as predicted. The first attempt looked fine
+on dev, because the rules hid the model's drop; the second looked like a win.
+Both were caught by re-measuring (ADR-005).
+
 The measurement also tripped over MCP-backbone's own rate limit: 810 of
 867 calls in one run were refusals, fast and wrong. Every timing script now
 refuses to report if any call was rate-limited.

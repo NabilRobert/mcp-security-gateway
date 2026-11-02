@@ -75,22 +75,22 @@ from injection families no rule was written from.
 | Detector | False positives | Recall | Precision |
 |---|---|---|---|
 | Rules | 0.0% | 14.6% | 100% |
-| **Rules + model** (fp32, threshold 0.999) | **1.2%** | **49.7%** | **96.0%** |
+| **Rules + model** (fp32, threshold 0.999) | **1.1%** | **49.7%** | **96.3%** |
 
 What it shows:
 - **The rules don't generalise.** They catch 100% of the dev split they
   were written from, and 14.6% of unseen phrasings.
 - **The model does most of the real work.** Together, the two layers catch
-  about half of unseen injections, at a 1.2% false-positive rate.
+  about half of unseen injections, at a 1.1% false-positive rate.
 - **Weakest families:** messages addressed to the assistant (13%) and
   conditionals ("if you are an AI…", 27%).
 - **Strongest families:** obfuscated text (87%) and Japanese (84%).
 - **False positives:** ordinary text such as a film description ("…who must
   defeat…") and filesystem error messages.
 - **Timeouts:** a scan past the 2 s timeout blocks the output, and counts
-  here as flagged (3 of 1,751 samples).
+  here as flagged (2 of 1,751 samples).
 
-Dev numbers, for comparison: rules 0% FP / 100% recall; rules + model 2.8%
+Dev numbers, for comparison: rules 0% FP / 100% recall; rules + model 1.5%
 FP / 100% recall. An int8 copy was tried to speed the model up. It ran
 about 1.7× faster but lost 19 points of recall, failing the acceptance rule
 fixed beforehand, so the fp32 model stays
@@ -101,14 +101,14 @@ fixed beforehand, so the fp32 model stays
 [`gateway-fp/`](eval/results/gateway-fp/README.md)).
 - **The proxy alone** adds a median of about 3–9 ms per call (p95 15 ms or
   less), with the audit log `fsync`ing. The rules add nothing measurable.
-- **The model layer** adds 18–87 ms at the median, but its p95 reaches the
+- **The model layer** adds 21–55 ms at the median, but its p95 reaches the
   2 s timeout on large outputs.
   - Through the gateway, it blocks **2.5% of held-out normal outputs**
-    (10 of 405), against 1.2% offline. Most of the difference is large
+    (10 of 405), against 1.1% offline. Most of the difference is large
     outputs timing out on a laptop CPU.
   - A first version blocked 35% of filesystem calls. It scanned repeated
     text twice, and timed-out scans kept running and slowed the next. Both
-    are fixed (scan `s2`).
+    are fixed.
 - **Choose per deployment.** Rules only block nothing normal but catch
   little that's unseen. Rules + model catch about half, and wrongly block
   about 1 normal output in 40.

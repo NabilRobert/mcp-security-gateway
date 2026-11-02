@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from mcp_gateway.detect import Detector
+from mcp_gateway.detect import Detector, keys_for_scanning, scan_output
 from mcp_gateway.eval.split import Split, benign_split
 
 SEED = 20261027
@@ -128,7 +128,7 @@ async def score(detector: Detector, samples: Sequence[Sample], split: str) -> Sc
     for sample in samples:
         start = time.perf_counter()
         try:
-            suspicious = (await detector.scan(sample.text)).suspicious
+            suspicious = (await scan_output(detector, sample.text, keys_for_scanning(sample.text))).suspicious
         except Exception:
             suspicious, errors = True, errors + 1
         flagged.append((sample, suspicious))

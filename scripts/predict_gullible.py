@@ -23,7 +23,7 @@ import yaml  # noqa: E402
 from mcp_gateway.app import build_detector  # noqa: E402
 from mcp_gateway.config import DetectorSettings, ModelSettings  # noqa: E402
 
-HARNESS = ROOT.parent / "agent-eval-harness-gateway"
+HARNESS = ROOT.parent / "agent-eval-harness"
 SUITE = HARNESS / "suites" / "attacks.yaml"
 FIXTURE = HARNESS / "suites" / "fixtures" / "acme-shop-attacks"
 MODEL = ROOT / "models/protectai-deberta-v3-base-prompt-injection-v2/90c9989b1a342275dd0d1a95aad283c04e075671"
