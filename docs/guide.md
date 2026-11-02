@@ -37,10 +37,11 @@ sequenceDiagram
    the key's fingerprint.
 2. **Route and session.** `build_app` mounts one MCP app per upstream at
    `/mcp/<route>/`; each one is a `proxy.py: Route`, built in
-   `app.py: open_routes`. The MCP SDK opens the request and calls
-   `Route._call_tool`. `Route._caller` reads the caller the auth step found
-   and binds the session (its `Mcp-Session-Id`) to that caller, so another
-   key can't list or call tools on it.
+   `app.py: open_routes`. `app.py: SessionGuard` binds a session (its
+   `Mcp-Session-Id`) to the key that opened it, and answers any other key
+   with a 404 before the MCP SDK sees the request. The SDK then calls
+   `Route._call_tool`, and `Route._caller` reads the caller the auth step
+   found.
 3. **Rate limit, then policy.**
    - `ratelimit.py: CallLimiter.take` counts the call against the key's
      `rate_limit`, if it has one. It runs first, so denied calls count too.
@@ -173,7 +174,7 @@ flowchart LR
 | Window | A 512-token slice of text, overlapping the next by 64; long outputs are scanned window by window | `detect.py: ModelDetector.windows` |
 | Fail closed | When a check can't run (a detector error, a timeout, an unwritable log), the call is refused rather than let through | `proxy.py: Route._call_tool` |
 | Scan cap | Text longer than this isn't scanned, so it's blocked | `config.py: DetectorSettings.scan_cap_chars` |
-| Spotlighting | Marking an output as untrusted data instead of blocking it (`on_suspicious: annotate`) | `proxy.py: annotated_result` |
+| Spotlighting | Marking an output as untrusted data instead of blocking it (`on_suspicious: annotate`), inside markers that are random per result | `proxy.py: annotated_result` |
 | Audit log | Append-only JSONL: a line before each call and one after | `audit.py: AuditLog` |
 | Hash chain | Each audit line carries the hash of the one before, so edits show; `mcp-gateway verify-log` checks it | `audit.py: verify_log` |
 | `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded except for the agent's own connection keys | `proxy.py: end_to_end_meta` |
@@ -185,13 +186,6 @@ flowchart LR
 | Recall, false positive | Share of injections caught; share of normal outputs wrongly flagged | `eval/score.py: score` |
 | Mutation testing | Breaks the code on purpose to check the tests notice | `docs/mutation-testing.md` |
 | ADR | Architecture decision record: one choice, with the alternatives | `docs/adr/` |
-
-## Known gaps
-
-Some paths around session binding and annotate mode are
-open. They're reported privately, and the details stay out of this public
-guide until they're fixed. Until then, read "scan" and "refuse" above as
-covering the normal paths, not every path.
 
 ## Where to change things
 
