@@ -1,8 +1,8 @@
 """Wiring: upstream clients, routes, and the Starlette app around them.
 
-Start-up order follows Phase 4: connect to every upstream and check that
-each tool a policy names exists there (a typo fails loudly), open the audit
-log, then serve. Shutdown closes the MCP sessions before the upstream
+Start-up order: open the audit log, connect to every upstream and check that
+each tool a policy names exists there (a typo fails loudly), check the
+log's hash chain, write its `start` line, then serve. Shutdown closes the MCP sessions before the upstream
 clients they forward to (Spike 1).
 """
 
@@ -27,7 +27,8 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.responses import PlainTextResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_gateway import __version__
 from mcp_gateway.audit import AuditError, AuditLog, verify_chain
@@ -98,24 +99,44 @@ async def open_routes(
 OPEN_PATHS = frozenset({"/healthz"})
 
 
-class SessionEndHook:
-    """Tells a route when its client deletes a session (HTTP DELETE with an
-    Mcp-Session-Id), after the SDK has handled the request."""
+class SessionGuard:
+    """Keeps each MCP session to the key that opened it, in the HTTP layer:
+    the SDK serves GET and DELETE on a session without calling a handler, so
+    a check in the proxy can't cover them. A session is bound when the SDK
+    issues its id, and a request on another key's session gets the same 404
+    as an unknown session, so this doesn't confirm that a session exists."""
 
     def __init__(self, app: ASGIApp, routes: dict[str, Route]) -> None:
         self.app = app
         self.routes = routes
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        await self.app(scope, receive, send)
-        if scope["type"] != "http" or scope.get("method") != "DELETE":
-            return
+    def _route_of(self, scope: Scope) -> Route | None:
         parts = str(scope.get("path", "")).strip("/").split("/")
-        route = self.routes.get(parts[1]) if len(parts) >= 2 and parts[0] == "mcp" else None
+        return self.routes.get(parts[1]) if len(parts) >= 2 and parts[0] == "mcp" else None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        route = self._route_of(scope) if scope["type"] == "http" else None
         user = scope.get("user")
+        if route is None or not isinstance(user, CallerUser):
+            await self.app(scope, receive, send)
+            return
+        caller = user.caller_id
         session = dict(scope.get("headers", [])).get(MCP_SESSION_ID_HEADER.encode(), b"").decode()
-        if route is not None and isinstance(user, CallerUser) and session:
-            route.session_ended(session, user.caller_id)
+        if session and not route.may_use_session(session, caller):
+            route.session_refused(caller)
+            await PlainTextResponse("session not found", status_code=404)(scope, receive, send)
+            return
+
+        async def bind_issued_session(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                issued = dict(message.get("headers", [])).get(MCP_SESSION_ID_HEADER.encode())
+                if issued:
+                    route.bind_session(issued.decode(), caller)
+            await send(message)
+
+        await self.app(scope, receive, bind_issued_session)
+        if scope.get("method") == "DELETE" and session:
+            route.session_ended(session, caller)
 
 
 def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) -> FastAPI:
@@ -149,7 +170,7 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
     # describe itself to whoever asks.
     app = FastAPI(title="mcp-gateway", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     # Added first, so it runs inside the auth middleware and sees the caller.
-    app.add_middleware(SessionEndHook, routes=routes)
+    app.add_middleware(SessionGuard, routes=routes)
     app.add_middleware(
         AuthenticationMiddleware,
         backend=ApiKeyBackend(config.callers, open_paths=OPEN_PATHS),

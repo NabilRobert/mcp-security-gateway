@@ -14,10 +14,11 @@ neither reads nor logs what else `_meta` holds.
 import contextlib
 import hashlib
 import re
+import secrets
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any, cast
 
 from mcp.server import Server, ServerRequestContext
@@ -171,14 +172,31 @@ def blocked_result(why: str) -> CallToolResult:
 
 
 def annotated_result(result: CallToolResult) -> CallToolResult:
-    """Spotlighting (Hines et al., 2024): mark each text block as data."""
+    """Spotlighting (Hines et al., 2024): mark each text block, and each string
+    in structured content, as data. The markers are random per result, or the
+    flagged text could close them itself."""
+    fence = secrets.token_hex(8)
+
+    def fenced(text: str) -> str:
+        return f"<<<UNTRUSTED {fence}\n{text}\nUNTRUSTED {fence}>>>"
+
     content = [
-        TextContent(type="text", text=f"{ANNOTATION}\n<<<UNTRUSTED\n{item.text}\nUNTRUSTED>>>")
-        if isinstance(item, TextContent)
-        else item
+        TextContent(type="text", text=f"{ANNOTATION}\n{fenced(item.text)}") if isinstance(item, TextContent) else item
         for item in result.content
     ]
-    return result.model_copy(update={"content": content})
+    return result.model_copy(
+        update={"content": content, "structured_content": _map_strings(result.structured_content, fenced)}
+    )
+
+
+def _map_strings(value: Any, change: Callable[[str], str]) -> Any:
+    if isinstance(value, str):
+        return change(value)
+    if isinstance(value, list):
+        return [_map_strings(item, change) for item in cast(list[Any], value)]
+    if isinstance(value, dict):
+        return {key: _map_strings(item, change) for key, item in cast(dict[str, Any], value).items()}
+    return value
 
 
 class ScreenedUpstreamError(Exception):
@@ -227,14 +245,25 @@ class Route:
             raise MCPError(INVALID_REQUEST, "unauthenticated request")
         session = session_id_of(ctx)
         if session is not None:
-            now = time.monotonic()
-            bound = self._session_callers.get(session)
-            if bound is not None and bound[0] != user.caller_id:
+            if not self.may_use_session(session, user.caller_id):
                 raise MCPError(INVALID_REQUEST, "this session belongs to another caller")
-            if bound is None and len(self._session_callers) > 10_000:
-                self._forget_idle(now)
-            self._session_callers[session] = (user.caller_id, now)
+            self.bind_session(session, user.caller_id)
         return user.caller_id
+
+    def may_use_session(self, session: str, caller: str) -> bool:
+        bound = self._session_callers.get(session)
+        return bound is None or bound[0] == caller
+
+    def bind_session(self, session: str, caller: str) -> None:
+        now = time.monotonic()
+        if session not in self._session_callers and len(self._session_callers) > 10_000:
+            self._forget_idle(now)
+        self._session_callers[session] = (caller, now)
+
+    def session_refused(self, caller: str) -> None:
+        """Audited without the id: on this request it's someone else's."""
+        reason = "request on another caller's session"
+        self._try_append("call", decision="denied", caller=caller, route=self.name, reason=reason)
 
     def _forget_idle(self, now: float) -> None:
         for session, (_, seen) in list(self._session_callers.items()):

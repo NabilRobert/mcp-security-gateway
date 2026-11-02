@@ -37,4 +37,12 @@
   between the calls of one trial.
 - Keying on the SDK's session object: it doesn't live past one request.
 
+**Moved to the HTTP layer (2026-11-02):** the binding above ran in the proxy's
+handlers, at a session's first tool request. But the SDK serves GET and DELETE
+on a session without calling a handler, so those weren't covered, and a session
+wasn't bound until that first request. `app.py: SessionGuard` now binds a session
+when the SDK issues its id, and refuses a request on another key's session
+before the SDK sees it. It answers 404, as for an unknown session, so a refusal
+doesn't confirm that a session exists.
+
 Part of the [architecture decisions](README.md) (Phase 5).
