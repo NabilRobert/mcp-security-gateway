@@ -10,9 +10,9 @@ it up was discarded. Raw numbers are in `summary.json`.
 
 | Gateway configuration | Pagila (HTTP→HTTP): added p50 / p95 | Filesystem (stdio→HTTP): added p50 / p95 | Calls blocked because the detector timed out |
 |---|---|---|---|
-| Detection off (the proxy alone) | 8.4 / 15.0 ms | 2.7 / 2.9 ms | 0 |
-| Rules | 8.9 / 15.0 ms | 2.7 / 4.2 ms | 0 |
-| Rules + model (fp32, 0.999, 2 s timeout, scan `s2`) | 18 / 1,078 ms | 87 / 2,020 ms | Pagila 2 of 240; filesystem 35 of 240 |
+| Detection off (the proxy alone) | 8.9 / 11.4 ms | 2.8 / 3.1 ms | 0 |
+| Rules | 9.3 / 12.1 ms | 2.9 / 4.1 ms | 0 |
+| Rules + model (fp32, 0.999, 2 s timeout, scan `s5`) | 21 / 1,130 ms | 55 / 2,008 ms | Pagila 2 of 240; filesystem 31 of 240 |
 
 **The proxy itself costs a few milliseconds.** Auth, policy, the
 hash-chained audit with `fsync`, and the rules add a median of about
@@ -26,6 +26,7 @@ calls blocked by timeouts):
 |---|---|---|
 | `s1` | 567 ms | 85 of 240 (an earlier run: 121) |
 | `s2` | 87 ms | 35 of 240 |
+| `s5` (also scans prose JSON keys) | 55 ms | 31 of 240 |
 
 The `s1` scan had two faults:
 1. It scanned the filesystem server's text twice, once as text and again as

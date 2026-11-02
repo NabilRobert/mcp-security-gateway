@@ -67,7 +67,10 @@ sequenceDiagram
 6. **Scan the result.** `proxy.py: scan_text` collects the text to scan:
    the text blocks plus the string values of structured content. JSON text
    is unwrapped first (`detect.py: text_for_scanning`), because the
-   classifier reacts to JSON syntax itself.
+   classifier reacts to JSON syntax itself. JSON keys that read like prose
+   (`detect.py: reads_like_prose`) are scanned as a second, separate text
+   (`detect.py: scan_output`): mixed in with the values they weaken the
+   model's verdict, and it misreads a bare list of field names.
    - `proxy.py: _unscanned_reason` blocks what can't be read (images,
      audio, text past the scan cap), unless the policy allows it.
    - `detect.py: LayeredDetector.scan` runs the layers in order and stops
@@ -185,7 +188,7 @@ flowchart LR
 
 ## Known gaps
 
-Some paths around the scanner and session binding are
+Some paths around session binding and annotate mode are
 open. They're reported privately, and the details stay out of this public
 guide until they're fixed. Until then, read "scan" and "refuse" above as
 covering the normal paths, not every path.
