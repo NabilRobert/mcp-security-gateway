@@ -37,4 +37,11 @@
   (`scripts/check_tool_descriptions.py`).
 - Listing costs a scan per changed tool; unchanged tools are cached.
 
+**Widened (2026-11-02):** screening now reads everything a model can read of
+a definition, not only `description` values: the tool's name, its titles, and
+the strings in its input and output schemas, property names included. A call
+is screened against every page of the upstream's tools, and a tool the
+upstream no longer lists is refused, since it can't be screened. The real
+upstreams' 18 tools all still pass.
+
 Part of the [architecture decisions](README.md) (Phase 5).
