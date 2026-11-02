@@ -40,31 +40,38 @@ sequenceDiagram
    `app.py: open_routes`. The MCP SDK opens the request and calls
    `Route._call_tool`. `Route._caller` reads the caller the auth step found
    and binds the session (its `Mcp-Session-Id`) to that caller, so another
-   key can't use it.
+   key can't list or call tools on it.
 3. **Rate limit, then policy.**
    - `ratelimit.py: CallLimiter.take` counts the call against the key's
-     `rate_limit`, if it has one.
+     `rate_limit`, if it has one. It runs first, so denied calls count too.
    - `policy.py: check_call` checks the route, the tool and each argument
      against the caller's policy. Path arguments are resolved before a
      prefix check (`policy.py: path_within`).
    - `Route._tool_is_flagged` refuses a tool whose description looked like
      an injection (see "Tool-description screening" below).
 4. **Write the "call" line.** `audit.py: AuditLog.append` writes a
-   `forwarding` line before anything is sent. If the log can't be written,
-   the call is refused: nothing happens that isn't recorded.
+   `forwarding` line before anything is sent, with the arguments, hiding
+   any field whose name looks like a secret (`proxy.py: redact`). If the
+   log can't be written, the call is refused: nothing happens that isn't
+   recorded.
 5. **Forward.** `upstreams.py` picks the client: one shared connection
    (`SharedUpstream`), or one process per session for stateful stdio
-   servers (`PerSessionUpstreams`). The call's `_meta` goes along
-   unchanged (`proxy.py: end_to_end_meta`), with the authenticated caller
-   added under `io.github.nabilrobert.mcp-gateway/caller`.
-6. **Scan the result.** `proxy.py: scan_text` collects what a model would
-   read: the text blocks plus the string values of structured content.
+   servers (`PerSessionUpstreams`). The call's `_meta` goes along, minus
+   the keys that belong to the agent's own connection
+   (`proxy.py: end_to_end_meta`). The authenticated caller is written under
+   `io.github.nabilrobert.mcp-gateway/caller`, replacing anything the client
+   put there.
+6. **Scan the result.** `proxy.py: scan_text` collects the text to scan:
+   the text blocks plus the string values of structured content. JSON text
+   is unwrapped first (`detect.py: text_for_scanning`), because the
+   classifier reacts to JSON syntax itself.
    - `proxy.py: _unscanned_reason` blocks what can't be read (images,
      audio, text past the scan cap), unless the policy allows it.
    - `detect.py: LayeredDetector.scan` runs the layers in order and stops
      at the first flag. `detect.py: RulesDetector.scan` matches the patterns
      in `rules/injection.yaml`. `detect.py: ModelDetector.scan` runs
-     ProtectAI's classifier in 512-token windows, under a 2 s timeout.
+     ProtectAI's classifier in 512-token windows, under a 2 s timeout. An
+     output needing more than `max_windows` windows is flagged unread.
    - A flagged output is blocked (`proxy.py: blocked_result`), annotated as
      untrusted (`proxy.py: annotated_result`) or only logged, as the
      policy's `on_suspicious` says. A detector error or timeout blocks it.
@@ -72,8 +79,9 @@ sequenceDiagram
    and a hash of the output (never the output itself), then answer the
    agent.
 
-With tracing on, each of these stages is its own span
-(`tracing.py: stage`), under the MCP SDK's span for the request.
+With tracing on, `rate_limit`, `policy`, `audit`, `forward` and `detect`
+are each their own span (`tracing.py: stage`), under the MCP SDK's span for
+the request.
 
 ## A blocked call
 
@@ -152,22 +160,36 @@ flowchart LR
 | Detector | What scans text for injections; its `version` is recorded on every result line | `detect.py: Detector` |
 | Rules layer | Hand-written patterns: fast, precise, narrow | `detect.py: RulesDetector`, `rules/injection.yaml` |
 | Model layer | ProtectAI's DeBERTa classifier, run locally with onnxruntime | `detect.py: ModelDetector` |
-| Threshold | The model's score at or above which text is flagged (0.999) | `config.py: ModelSettings` |
-| Window | A 512-token slice of text; long outputs are scanned window by window | `detect.py: ModelDetector.windows` |
+| ONNX, onnxruntime | A file format for models, and the library that runs them on the CPU without PyTorch | `detect.py: ModelDetector` |
+| Threshold | The model's score at or above which text is flagged (0.999 in the example config) | `config.py: ModelSettings` |
+| Window | A 512-token slice of text, overlapping the next by 64; long outputs are scanned window by window | `detect.py: ModelDetector.windows` |
 | Fail closed | When a check can't run (a detector error, a timeout, an unwritable log), the call is refused rather than let through | `proxy.py: Route._call_tool` |
 | Scan cap | Text longer than this isn't scanned, so it's blocked | `config.py: DetectorSettings.scan_cap_chars` |
 | Spotlighting | Marking an output as untrusted data instead of blocking it (`on_suspicious: annotate`) | `proxy.py: annotated_result` |
 | Audit log | Append-only JSONL: a line before each call and one after | `audit.py: AuditLog` |
 | Hash chain | Each audit line carries the hash of the one before, so edits show; `mcp-gateway verify-log` checks it | `audit.py: verify_log` |
-| `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded unchanged | `proxy.py: end_to_end_meta` |
+| `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded except for the agent's own connection keys | `proxy.py: end_to_end_meta` |
 | Caller stamp | The authenticated caller, added to `_meta` so an upstream can trust who called | `proxy.py: CALLER_META_KEY` |
-| Rate limit | A cap on a key's calls per window, across all routes | `ratelimit.py: CallLimiter` |
+| Rate limit | A cap on a key's calls per moving window, across all routes. Counts are in memory, so a restart resets them | `ratelimit.py: CallLimiter` |
+| Stdio, HTTP upstream | Stdio: the gateway starts the server as a child process. HTTP: it connects to one already running | `config.py: StdioUpstream`, `HttpUpstream` |
 | Span, trace | One timed step, and the tree of steps for one request (OpenTelemetry) | `tracing.py` |
 | Dev and test split | Dev tunes the detector; test, kept apart, is scored once per detector version | `eval/split.py`, `eval/score.py` |
 | Recall, false positive | Share of injections caught; share of normal outputs wrongly flagged | `eval/score.py: score` |
+| Mutation testing | Breaks the code on purpose to check the tests notice | `docs/mutation-testing.md` |
+| ADR | Architecture decision record: one choice, with the alternatives | `docs/adr/` |
+
+## Known gaps
+
+Some paths around the scanner, the tool screening and session binding are
+open. They're reported privately, and the details stay out of this public
+guide until they're fixed. Until then, read "scan" and "refuse" above as
+covering the normal paths, not every path.
 
 ## Where to change things
 
+- **Run the checks** (the same ones CI runs): `uv sync --locked --python 3.12`,
+  then `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run pyright` and `uv run pytest -q`.
 - **Add an upstream server:** add it under `upstreams:` in your config
   (see `examples/gateway.yaml`), then allow its tools in a policy. The
   gateway checks at start-up that every allowed tool exists.
@@ -180,7 +202,9 @@ flowchart LR
   `on_suspicious` (`block`, `annotate` or `log`).
 - **Add an injection pattern:** edit `src/mcp_gateway/rules/injection.yaml`.
   Write it from the dev split only, then score the test split once
-  (`mcp-gateway eval-detector`).
+  (`mcp-gateway eval-detector --split test`).
+- **Change the scan cap, or turn tool screening off:** `scan_cap_chars` and
+  `scan_tool_descriptions` under `detector` in the config.
 - **Change the model's threshold, window cap or timeout:** `detector.model`
   in the config. To try another model, see ADR-015 for how the last
   comparison was run (`scripts/compare_models.py`).
