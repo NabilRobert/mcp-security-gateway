@@ -14,6 +14,7 @@ import sys
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from dataclasses import dataclass
 from types import FrameType
 from typing import Any, cast
 
@@ -24,19 +25,17 @@ from anyio.abc import TaskGroup
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
-from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
-from starlette.responses import PlainTextResponse
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_gateway import __version__
 from mcp_gateway.audit import AuditError, AuditLog, verify_chain
-from mcp_gateway.auth import ApiKeyBackend, CallerUser, KeyRejected, unauthorized_handler
+from mcp_gateway.auth import ApiKeyBackend, KeyRejected, unauthorized_handler
 from mcp_gateway.config import ConfigError, DetectorSettings, GatewayConfig, HttpUpstream, StdioUpstream
 from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDetector, StubDetector
 from mcp_gateway.proxy import Route
 from mcp_gateway.ratelimit import CallLimiter
+from mcp_gateway.sessions import SessionGuard
 from mcp_gateway.tracing import configure_tracing, shutdown_tracing
 from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream, list_all_tools
 
@@ -59,14 +58,18 @@ async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) ->
         yield client
 
 
-async def open_routes(
-    stack: AsyncExitStack,
-    config: GatewayConfig,
-    audit: AuditLog,
-    detector: Detector,
-    connect: Connect,
-    tasks: TaskGroup,
-) -> dict[str, Route]:
+@dataclass(frozen=True)
+class Wiring:
+    """What every route is built from."""
+
+    config: GatewayConfig
+    audit: AuditLog
+    detector: Detector
+    connect: Connect
+
+
+async def open_routes(stack: AsyncExitStack, tasks: TaskGroup, wiring: Wiring) -> dict[str, Route]:
+    config, audit, detector, connect = wiring.config, wiring.audit, wiring.detector, wiring.connect
     routes: dict[str, Route] = {}
     limiter = CallLimiter(config)
     for name, upstream in config.upstreams.items():
@@ -99,44 +102,20 @@ async def open_routes(
 OPEN_PATHS = frozenset({"/healthz"})
 
 
-class SessionGuard:
-    """Keeps each MCP session to the key that opened it, in the HTTP layer:
-    the SDK serves GET and DELETE on a session without calling a handler, so
-    a check in the proxy can't cover them. A session is bound when the SDK
-    issues its id, and a request on another key's session gets the same 404
-    as an unknown session, so this doesn't confirm that a session exists."""
-
-    def __init__(self, app: ASGIApp, routes: dict[str, Route]) -> None:
-        self.app = app
-        self.routes = routes
-
-    def _route_of(self, scope: Scope) -> Route | None:
-        parts = str(scope.get("path", "")).strip("/").split("/")
-        return self.routes.get(parts[1]) if len(parts) >= 2 and parts[0] == "mcp" else None
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        route = self._route_of(scope) if scope["type"] == "http" else None
-        user = scope.get("user")
-        if route is None or not isinstance(user, CallerUser):
-            await self.app(scope, receive, send)
-            return
-        caller = user.caller_id
-        session = dict(scope.get("headers", [])).get(MCP_SESSION_ID_HEADER.encode(), b"").decode()
-        if session and not route.may_use_session(session, caller):
-            route.session_refused(caller)
-            await PlainTextResponse("session not found", status_code=404)(scope, receive, send)
-            return
-
-        async def bind_issued_session(message: Message) -> None:
-            if message["type"] == "http.response.start":
-                issued = dict(message.get("headers", [])).get(MCP_SESSION_ID_HEADER.encode())
-                if issued:
-                    route.bind_session(issued.decode(), caller)
-            await send(message)
-
-        await self.app(scope, receive, bind_issued_session)
-        if scope.get("method") == "DELETE" and session:
-            route.session_ended(session, caller)
+def _audit_rejected_key(audit: AuditLog, conn: HTTPConnection, exc: KeyRejected) -> None:
+    # The request is refused either way, so a log failure here is
+    # reported, not raised (raising would turn the 401 into a 500).
+    try:
+        audit.append(
+            "call",
+            decision="denied",
+            reason=f"auth: {exc.reason}",
+            key_fingerprint=exc.fingerprint,
+            client=conn.client.host if conn.client else None,
+            path=conn.url.path,
+        )
+    except AuditError as error:
+        print(f"mcp-gateway: {error}", file=sys.stderr)
 
 
 def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) -> FastAPI:
@@ -151,21 +130,6 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
             yield
 
-    def on_reject(conn: HTTPConnection, exc: KeyRejected) -> None:
-        # The request is refused either way, so a log failure here is
-        # reported, not raised (raising would turn the 401 into a 500).
-        try:
-            audit.append(
-                "call",
-                decision="denied",
-                reason=f"auth: {exc.reason}",
-                key_fingerprint=exc.fingerprint,
-                client=conn.client.host if conn.client else None,
-                path=conn.url.path,
-            )
-        except AuditError as error:
-            print(f"mcp-gateway: {error}", file=sys.stderr)
-
     # No interactive docs or OpenAPI schema: a security gateway shouldn't
     # describe itself to whoever asks.
     app = FastAPI(title="mcp-gateway", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -174,7 +138,7 @@ def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) 
     app.add_middleware(
         AuthenticationMiddleware,
         backend=ApiKeyBackend(config.callers, open_paths=OPEN_PATHS),
-        on_error=unauthorized_handler(on_reject),
+        on_error=unauthorized_handler(functools.partial(_audit_rejected_key, audit)),
     )
 
     @app.get("/healthz")
@@ -225,7 +189,7 @@ async def serve(
     tracing = configure_tracing()  # None unless OTEL_EXPORTER_OTLP_ENDPOINT is set
     previous_sigterm = _unwind_on_sigterm()
     try:
-        await _serve(config, audit, detector, host=host, port=port, connect=connect, started=started)
+        await _serve(Wiring(config, audit, detector, connect), host=host, port=port, started=started)
     except BaseExceptionGroup as group:
         # A start-up error raised inside an upstream client's task group comes
         # out wrapped; surface it as itself so the CLI exits 2 with a message.
@@ -288,19 +252,11 @@ def _first(group: BaseExceptionGroup[ConfigError]) -> ConfigError:
     return _first(inner) if isinstance(inner, BaseExceptionGroup) else inner
 
 
-async def _serve(
-    config: GatewayConfig,
-    audit: AuditLog,
-    detector: Detector,
-    *,
-    host: str,
-    port: int,
-    connect: Connect,
-    started: Callable[[uvicorn.Server], None] | None,
-) -> None:
+async def _serve(wiring: Wiring, *, host: str, port: int, started: Callable[[uvicorn.Server], None] | None) -> None:
+    config, audit = wiring.config, wiring.audit
     async with AsyncExitStack() as stack:
         tasks = await stack.enter_async_context(anyio.create_task_group())
-        routes = await open_routes(stack, config, audit, detector, connect, tasks)
+        routes = await open_routes(stack, tasks, wiring)
         # A broken chain is reported, not fatal: refusing to start would let
         # anyone who can edit the log keep the gateway down.
         problems = verify_chain(config.audit.path)
@@ -312,7 +268,7 @@ async def _serve(
             version=__version__,
             git_sha=os.environ.get("MCP_GATEWAY_GIT_SHA"),
             policy_sha256=config.policy_hash(),
-            detector=detector.version,
+            detector=wiring.detector.version,
             routes=sorted(routes),
         )
         server = uvicorn.Server(
