@@ -54,7 +54,8 @@ sequenceDiagram
      an injection (see "Tool-description screening" below).
 4. **Write the "call" line.** `audit.py: AuditLog.append` writes a
    `forwarding` line before anything is sent, with the arguments, hiding
-   any field whose name looks like a secret (`calls.py: redact`). If the
+   any field with a secret word in its name, such as `api_key` or
+   `accessToken` but not `keyword` (`calls.py: redact`). If the
    log can't be written, the call is refused: nothing happens that isn't
    recorded.
 5. **Forward.** `Route._forward` asks `upstreams.py` for the client: one shared connection

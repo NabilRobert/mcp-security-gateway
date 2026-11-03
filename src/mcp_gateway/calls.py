@@ -15,7 +15,18 @@ from typing import Any, cast
 from mcp.types import CallToolRequestParams
 from opentelemetry import trace
 
-SECRET_NAME = re.compile(r"key|token|password|passwd|secret|authorization|credential|cookie", re.IGNORECASE)
+# A field is secret if a word of its name is one of these. Words, not
+# substrings: `keyword`, `monkey_count` and `tokenizer` aren't secrets, and a
+# substring match hid them from the log. Names written as one lowercase word
+# can't be split, so the usual compounds are listed whole.
+SECRET_WORDS = frozenset(
+    {"key", "token", "password", "passwd", "secret", "authorization", "credential", "cookie"}
+    | {"keys", "tokens", "passwords", "secrets", "credentials", "cookies"}
+    | {"apikey", "accesskey", "privatekey", "secretkey", "accesstoken", "authtoken", "apitoken"}
+    | {"bearertoken", "idtoken", "refreshtoken", "sessiontoken", "clientsecret"}
+)
+# Splits `X-Auth-Token`, `api_key`, `accessToken` and `APIKey` into words.
+NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 REDACTED = "<redacted>"
 
 # The authenticated caller's id, stamped into every forwarded call's `_meta`,
@@ -38,10 +49,14 @@ def redact(value: Any) -> Any:
     secret is hidden."""
     if isinstance(value, dict):
         items = cast(dict[str, Any], value).items()
-        return {k: REDACTED if SECRET_NAME.search(str(k)) else redact(v) for k, v in items}
+        return {k: REDACTED if is_secret_name(str(k)) else redact(v) for k, v in items}
     if isinstance(value, list):
         return [redact(v) for v in cast(list[Any], value)]
     return value
+
+
+def is_secret_name(name: str) -> bool:
+    return any(word.lower() in SECRET_WORDS for word in NAME_WORD.findall(name))
 
 
 def end_to_end_meta(meta: Mapping[str, Any] | None) -> dict[str, Any]:
