@@ -118,6 +118,19 @@ def test_redaction_reaches_nested_values() -> None:
     }
 
 
+@pytest.mark.parametrize("name", ["keyword", "monkey_count", "tokenizer", "author", "passage", "secretary"])
+def test_a_secret_word_inside_another_word_is_kept(name: str) -> None:
+    assert redact({name: "v"}) == {name: "v"}
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["api_key", "privateKeyPem", "X-Auth-Token", "APIKey", "apikey", "client_secret", "PASSWORD", "aws.secret.key"],
+)
+def test_a_secret_name_in_any_case_style_is_redacted(name: str) -> None:
+    assert redact({name: "v"}) == {name: REDACTED}
+
+
 def test_cli_verify_log_exit_codes(tmp_path: Path) -> None:
     path = tmp_path / "a.jsonl"
     write_log(path)
