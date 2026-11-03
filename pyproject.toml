@@ -3,6 +3,7 @@ name = "mcp-gateway"
 version = "0.0.0"
 description = "A small, measured security gateway for MCP servers"
 requires-python = ">=3.12,<3.13"
+license = "MIT"
 dependencies = [
     "anyio==4.15.1",
     "fastapi==0.162.0",
