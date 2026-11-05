@@ -219,6 +219,10 @@ flowchart LR
   `"mcp-gateway:*"`. Other Host headers get HTTP 421; the default is
   localhost only.
 - **Turn tracing on:** set `OTEL_EXPORTER_OTLP_ENDPOINT`.
+- **Change the container deployment:** the image is `Dockerfile`; the
+  networks, mounts and memory cap are in `deploy/compose.yaml`; the config
+  it mounts starts from `deploy/gateway.example.yaml`. Check a change with
+  `deploy/smoke-test.sh`.
 - **Check an audit log:** `uv run mcp-gateway verify-log <path>`.
 - **Add a new kind of check on calls:** `proxy.py: Route._call_tool`, as a
   new `stage(...)`, with a test in `tests/`.

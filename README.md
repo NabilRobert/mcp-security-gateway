@@ -153,6 +153,24 @@ decision and the `call_id`, which matches the audit log. The service name
 is `mcp-security-gateway` unless `OTEL_SERVICE_NAME` says otherwise. A dead viewer
 only loses spans, and a stop (Ctrl-C or SIGTERM) waits at most 2 s for it.
 
+## In a container
+
+`deploy/compose.yaml` runs the gateway non-root on a read-only filesystem,
+rules-only, with no published port. Apps reach it on the
+`mcp-gateway-clients` network, and it reaches MCP servers on
+`mcp-gateway-upstreams`. The config and the audit folder are mounted from
+the host (see the comments at the top of the compose file):
+
+```bash
+cp deploy/gateway.example.yaml deploy/gateway.yaml   # add callers and policies
+cd deploy && docker compose up -d --build
+```
+
+`deploy/smoke-test.sh` builds the image and checks it end to end on its own
+networks: it lists tools and makes one call from the clients network, checks
+that the upstream can't be reached directly, and verifies the audit log
+after a clean stop. CI runs it too.
+
 ## Layout
 
 | Path | What's there |
@@ -162,6 +180,7 @@ only loses spans, and a stop (Ctrl-C or SIGTERM) waits at most 2 s for it.
 | `eval/` | The labelled set (`benign/`, `injections/`) and every published result (`results/`) |
 | `scripts/` | The measurements behind the numbers above, and the builder of the benign set |
 | `examples/` | A sample config |
+| `Dockerfile`, `deploy/` | The container image, its compose file and example config, and its smoke test |
 | `docs/` | The ADRs, the planning trail, the journey and the mutation-testing triage |
 
 ## Docs

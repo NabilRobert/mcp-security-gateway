@@ -1,0 +1,33 @@
+# Added to deploy/compose.yaml by deploy/smoke-test.sh: a stand-in MCP
+# server on the upstreams network and a client on the clients network, both
+# from the gateway's own image (it already has the MCP SDK).
+services:
+  mcp-gateway:
+    depends_on:
+      echo-mcp: {condition: service_healthy}
+
+  echo-mcp:
+    image: mcp-gateway:local
+    read_only: true
+    cap_drop: [ALL]
+    networks: [upstreams]
+    volumes:
+      - ./smoke/upstream.py:/smoke/upstream.py:ro
+      - ../tests/meta_echo_server.py:/smoke/meta_echo_server.py:ro
+    command: ["python", "/smoke/upstream.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 1)"]
+      interval: 1s
+      retries: 30
+
+  client:
+    image: mcp-gateway:local
+    read_only: true
+    cap_drop: [ALL]
+    networks: [clients]
+    profiles: [smoke]
+    environment:
+      SMOKE_KEY: ${SMOKE_KEY:?set by smoke-test.sh}
+    volumes:
+      - ./smoke/client.py:/smoke/client.py:ro
+    command: ["python", "/smoke/client.py"]

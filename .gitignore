@@ -9,3 +9,8 @@ models/
 mutants/
 # Per-run server banners from scripts/measure_gullible.py (temp paths only)
 eval/results/**/gateway.stderr
+
+# The container deployment's real config and audit log (deploy/compose.yaml)
+deploy/gateway.yaml
+deploy/audit/
+deploy/.env

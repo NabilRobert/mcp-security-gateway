@@ -1,0 +1,7 @@
+# The image needs only the package and its lock; everything else (the venv,
+# models, eval data, logs, any local config) stays out of the build context.
+*
+!pyproject.toml
+!uv.lock
+!src/
+**/__pycache__
