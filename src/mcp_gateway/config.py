@@ -145,6 +145,10 @@ class GatewayConfig(_Model):
     policies: dict[Annotated[str, Field(pattern=NAME)], Policy]
     audit: AuditSettings
     detector: DetectorSettings = DetectorSettings()
+    # The Host headers the MCP endpoints answer (the SDK's DNS-rebinding
+    # check; "name:*" allows any port). Localhost only unless listed: in a
+    # container, apps call the gateway by its service name, "mcp-gateway:*".
+    allowed_hosts: list[str] = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
 
     @model_validator(mode="after")
     def _references(self) -> Self:
