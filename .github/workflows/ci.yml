@@ -22,3 +22,9 @@ jobs:
       # No network and no model: the tests use an in-memory upstream. The
       # real filesystem-server test skips here (the harness isn't checked out).
       - run: uv run --frozen pytest -q
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Builds the image and runs it through deploy/compose.yaml on throwaway networks.
+      - run: deploy/smoke-test.sh

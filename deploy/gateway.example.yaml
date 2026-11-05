@@ -1,0 +1,34 @@
+# The config for the container (deploy/compose.yaml): copy it to
+# deploy/gateway.yaml, which git ignores, and fill in the callers and policies.
+# Upstream URLs use the names of the containers on the mcp-gateway-upstreams
+# network. Make each caller's key with
+#   docker run --rm mcp-gateway:local mcp-gateway hash-key
+# and give the key to the app; only its hash goes here.
+#
+# For Juku, the callers and policies are in juku-agents'
+# ops/gateway/juku-routes.example.yaml; its upstream is below.
+upstreams:
+  juku: {transport: http, url: "http://juku-mcp:8000/mcp"}
+
+callers:
+  example:
+    key_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # quoted; replace
+    policy: example
+
+policies:
+  example:
+    routes:
+      juku:
+        tools: {}   # deny by default: list the tools this caller may use
+
+# Apps call the gateway by its service name; without this it answers only localhost.
+allowed_hosts: ["mcp-gateway:*"]
+
+# Rules only: no model to download or load, which keeps the container small.
+detector:
+  rules: true
+
+# Inside the container; MCP_GATEWAY_AUDIT_DIR is mounted here.
+audit:
+  path: /var/log/mcp-gateway/audit.jsonl
+  fsync: true

@@ -1,0 +1,58 @@
+# The gateway on a server, next to the apps and MCP servers it sits between.
+# Run from deploy/:  docker compose up -d --build
+#
+# It makes two networks; apps and MCP servers in other compose projects join
+# them as `external` networks:
+#   mcp-gateway-clients     apps -> the gateway (http://mcp-gateway:8000/mcp/<route>/)
+#   mcp-gateway-upstreams   the gateway -> MCP servers
+# A server that is only on the upstreams network can't be reached except
+# through the gateway. Both networks are internal (no route out), since a
+# rules-only gateway needs nothing beyond them; an upstream outside Docker
+# or a model download would need a network with egress.
+#
+# The gateway connects to every upstream at start and exits (code 2) if one
+# is down; `restart: unless-stopped` retries until it is up.
+#
+# From outside the image, set in deploy/.env or the environment:
+#   MCP_GATEWAY_CONFIG_FILE  the config (default ./gateway.yaml; start from
+#                            gateway.example.yaml). It must be readable by uid 10001.
+#   MCP_GATEWAY_AUDIT_DIR    a host folder for the audit log, writable by uid
+#                            10001 (default ./audit). Apps that import the log
+#                            mount the same folder read-only.
+name: mcp-gateway
+
+networks:
+  clients:
+    name: ${MCP_GATEWAY_CLIENTS_NETWORK:-mcp-gateway-clients}
+    internal: true
+  upstreams:
+    name: ${MCP_GATEWAY_UPSTREAMS_NETWORK:-mcp-gateway-upstreams}
+    internal: true
+
+secrets:
+  # Holds key hashes, not keys, but it is the policy: kept out of the image
+  # and mounted read-only at /run/secrets/mcp_gateway_config.
+  mcp_gateway_config:
+    file: ${MCP_GATEWAY_CONFIG_FILE:-./gateway.yaml}
+
+services:
+  mcp-gateway:
+    build:
+      context: ..
+    image: mcp-gateway:local
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m"]
+    restart: unless-stopped
+    networks: [clients, upstreams]
+    # No `ports:` on purpose: apps reach it on the clients network.
+    secrets: [mcp_gateway_config]
+    volumes:
+      - ${MCP_GATEWAY_AUDIT_DIR:-./audit}:/var/log/mcp-gateway
+    # Rules-only, deploy/smoke-test.sh measured an 80 MiB cgroup peak; twice
+    # that leaves room for many sessions and large outputs. A `docker exec`
+    # adds its process to this cgroup, so run hash-key or verify-log in a
+    # separate `docker run --rm mcp-gateway:local ...` instead.
+    mem_limit: 160m
+    memswap_limit: 160m

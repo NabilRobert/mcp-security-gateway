@@ -25,6 +25,7 @@ from anyio.abc import TaskGroup
 from fastapi import FastAPI
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
 
@@ -100,6 +101,9 @@ async def open_routes(stack: AsyncExitStack, tasks: TaskGroup, wiring: Wiring) -
 
 
 OPEN_PATHS = frozenset({"/healthz"})
+# The SDK's own default for localhost servers. Agents aren't browsers and
+# send no Origin; a page that does is refused unless it is local.
+LOCAL_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
 
 
 def _audit_rejected_key(audit: AuditLog, conn: HTTPConnection, exc: KeyRejected) -> None:
@@ -119,7 +123,11 @@ def _audit_rejected_key(audit: AuditLog, conn: HTTPConnection, exc: KeyRejected)
 
 
 def build_app(config: GatewayConfig, routes: dict[str, Route], audit: AuditLog) -> FastAPI:
-    apps = {name: route.server().streamable_http_app(streamable_http_path="/") for name, route in routes.items()}
+    security = TransportSecuritySettings(allowed_hosts=config.allowed_hosts, allowed_origins=LOCAL_ORIGINS)
+    apps = {
+        name: route.server().streamable_http_app(streamable_http_path="/", transport_security=security)
+        for name, route in routes.items()
+    }
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
