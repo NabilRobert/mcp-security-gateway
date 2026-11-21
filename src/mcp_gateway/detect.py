@@ -31,8 +31,9 @@ if TYPE_CHECKING:
 RULES_FILE = Path(__file__).parent / "rules" / "injection.yaml"
 # Bumped when the scanning code changes, so results from an older
 # implementation can't pass as this one's. s5 also scans JSON keys that read
-# like prose, on their own (s3 and s4 were earlier attempts; see ADR-005).
-SCAN_IMPLEMENTATION = "s5"
+# like prose, on their own (s3 and s4 were earlier attempts; see ADR-005). s6
+# scans every value of a repeated JSON key.
+SCAN_IMPLEMENTATION = "s6"
 # Four words: "ignore all previous instructions". Field names are shorter.
 MIN_WORDS_IN_PROSE_KEY = 4
 WORD = re.compile(r"[^\W_]+")
@@ -90,12 +91,22 @@ def _collect_keys(value: Any, keys: dict[str, None]) -> None:
             _collect_keys(item, keys)
 
 
+def _keep_repeated_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object with every value of a repeated key kept, as a list.
+    `json.loads` keeps only the last value, while the agent's parser may keep
+    the first: scanning one would pass the other unread."""
+    found: dict[str, Any] = {}
+    for key, value in pairs:
+        found[key] = [found[key], value] if key in found else value
+    return found
+
+
 def _parse_json(text: str) -> Any:
     """The JSON object or array in `text`, or None if it isn't one."""
     if text.lstrip()[:1] not in ("{", "["):
         return None
     try:
-        return json.loads(text)
+        return json.loads(text, object_pairs_hook=_keep_repeated_keys)
     except ValueError:
         return None
 

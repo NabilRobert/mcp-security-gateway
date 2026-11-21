@@ -102,6 +102,12 @@ async def test_a_flagged_text_is_not_scanned_again_for_its_keys() -> None:
     assert detector.scans == 1
 
 
+def test_every_value_of_a_repeated_json_key_is_scanned() -> None:
+    """Python keeps the last value of a repeated key; another parser may keep the first."""
+    repeated = '{"note": "first", "note": "second", "note": "third"}'
+    assert text_for_scanning(repeated) == "first\nsecond\nthird"
+
+
 def test_other_text_is_scanned_as_it_is() -> None:
     assert text_for_scanning("plain text {not json") == "plain text {not json"
     assert text_for_scanning("{broken json") == "{broken json"
@@ -186,6 +192,11 @@ def output_server() -> MCPServer:
         return CallToolResult(content=[TextContent(type="text", text="ok")], structured_content={INJECTION: 1})
 
     @mcp.tool()
+    def repeated_key() -> str:
+        """The injection is the first value of a repeated key, which `json.loads` drops."""
+        return f'{{"note": {json.dumps(INJECTION)}, "note": "ok"}}'
+
+    @mcp.tool()
     def image() -> CallToolResult:
         """Content the detector can't read."""
         pixel = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()
@@ -199,7 +210,16 @@ def output_server() -> MCPServer:
     return mcp
 
 
-TOOLS = ["clean", "injected", "structured_only", "key_in_json_text", "key_in_structured_content", "image", "huge"]
+TOOLS = [
+    "clean",
+    "injected",
+    "structured_only",
+    "key_in_json_text",
+    "key_in_structured_content",
+    "repeated_key",
+    "image",
+    "huge",
+]
 
 
 def config(tmp_path: Path, **policy: Any) -> GatewayConfig:
@@ -249,6 +269,12 @@ async def test_a_flagged_output_is_blocked_by_default(tmp_path: Path) -> None:
 async def test_an_injection_in_a_json_key_is_blocked(tmp_path: Path, tool: str) -> None:
     result, line = await call(config(tmp_path), tool)
     assert result.is_error and line["decision"] == "blocked"
+
+
+async def test_an_injection_hidden_behind_a_repeated_json_key_is_blocked(tmp_path: Path) -> None:
+    result, line = await call(config(tmp_path), "repeated_key")
+    assert result.is_error and INJECTION not in text(result)
+    assert line["decision"] == "blocked"
 
 
 async def test_annotate_marks_the_output_as_untrusted(tmp_path: Path) -> None:
