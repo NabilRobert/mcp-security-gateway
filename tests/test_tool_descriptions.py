@@ -217,14 +217,42 @@ async def test_one_name_listed_twice_gets_one_verdict_on_both(tmp_path: Path) ->
     assert await r._screen_tools(twins) == {"twin"}  # pyright: ignore[reportPrivateUsage]
 
 
-def test_schema_keywords_are_not_read_as_text() -> None:
+def test_the_usual_keyword_values_are_not_read_as_text() -> None:
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "required": ["limit"],
-        "properties": {"limit": {"type": "integer", "format": "int32", "$ref": "#/$defs/n"}},
+        "properties": {"limit": {"type": ["integer", "null"], "format": "int32"}},
     }
     assert tool_text(Tool(name="lookup", input_schema=schema)) == "lookup\nlimit"
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"properties": {"q": {"type": "string", "format": INJECTION}}},
+        {"properties": {"q": {"type": INJECTION}}},
+        {"$schema": INJECTION},
+        {"properties": {"q": {"$ref": f"#/$defs/{INJECTION}"}}},
+        {"required": [INJECTION]},
+        {"x-note": INJECTION},
+        {"x-note": {INJECTION: True}},
+        {INJECTION: 1},
+        {"properties": {"q": {"x-hint": {"type": INJECTION}}}},
+    ],
+    ids=[
+        "format_value",
+        "type_value",
+        "schema_value",
+        "ref",
+        "required",
+        "custom_keyword_value",
+        "key_under_custom_keyword",
+        "custom_key_name",
+        "keyword_inside_custom_keyword",
+    ],
+)
+def test_text_hidden_under_schema_keywords_or_custom_keys_is_screened(schema: dict[str, Any]) -> None:
+    assert INJECTION in tool_text(Tool(name="t", input_schema={"type": "object", **schema}))
 
 
 async def test_scanning_off_passes_definitions_through(tmp_path: Path) -> None:
