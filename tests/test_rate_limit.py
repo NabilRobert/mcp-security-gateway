@@ -40,7 +40,7 @@ async def test_past_the_limit_a_call_is_refused_and_never_forwarded(tmp_path: Pa
     assert [r.is_error for r in results] == [False, False, True]
     assert "call limit (2 per 1 minute) is used up" in text(results[2])
     assert fake.calls == [("echo", {"text": "0"}), ("echo", {"text": "1"})]
-    refused = [line for line in audit(cfg) if line.get("decision") == "rate_limited"]
+    refused = [line for line in audit(cfg) if line["kind"] == "call" and line.get("decision") == "rate_limited"]
     assert len(refused) == 1 and refused[0]["caller"] == "alpha" and refused[0]["limit"] == "2 per 1 minute"
 
 

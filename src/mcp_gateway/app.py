@@ -38,7 +38,7 @@ from mcp_gateway.proxy import Route
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.sessions import SessionGuard
 from mcp_gateway.tracing import configure_tracing, shutdown_tracing
-from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream, list_all_tools
+from mcp_gateway.upstreams import CappedTransport, PerSessionUpstreams, SessionBudget, SharedUpstream, list_all_tools
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
 
@@ -47,14 +47,21 @@ Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextMana
 async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) -> AsyncIterator[Client]:  # noqa: ARG001
     if isinstance(upstream, StdioUpstream):
         async with Client(
-            StdioServerParameters(command=upstream.command, args=upstream.args, cwd=upstream.cwd)
+            StdioServerParameters(command=upstream.command, args=upstream.args, cwd=upstream.cwd),
+            read_timeout_seconds=upstream.read_timeout_s,
         ) as client:
             yield client
         return
     headers = {"Authorization": f"Bearer {os.environ[upstream.auth_env]}"} if upstream.auth_env else {}
     async with (
-        httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(30.0, read=60.0)) as http,
-        Client(streamable_http_client(upstream.url, http_client=http)) as client,
+        httpx2.AsyncClient(
+            headers=headers,
+            timeout=httpx2.Timeout(30.0, read=upstream.read_timeout_s),
+            transport=CappedTransport(httpx2.AsyncHTTPTransport(), upstream.max_response_bytes),
+        ) as http,
+        Client(
+            streamable_http_client(upstream.url, http_client=http), read_timeout_seconds=upstream.read_timeout_s
+        ) as client,
     ):
         yield client
 
@@ -73,6 +80,7 @@ async def open_routes(stack: AsyncExitStack, tasks: TaskGroup, wiring: Wiring) -
     config, audit, detector, connect = wiring.config, wiring.audit, wiring.detector, wiring.connect
     routes: dict[str, Route] = {}
     limiter = CallLimiter(config)
+    budget = SessionBudget(config.upstream_sessions)
     for name, upstream in config.upstreams.items():
         per_session = isinstance(upstream, StdioUpstream) and upstream.per_session
         try:
@@ -92,7 +100,7 @@ async def open_routes(stack: AsyncExitStack, tasks: TaskGroup, wiring: Wiring) -
             if missing:
                 raise ConfigError(f"policy {policy_id!r} allows tools that {name!r} doesn't have: {missing}")
         if per_session:
-            sessions = PerSessionUpstreams(name, functools.partial(connect, name, upstream), tasks)
+            sessions = PerSessionUpstreams(name, functools.partial(connect, name, upstream), tasks, budget)
             stack.callback(sessions.close_all)  # runs before the task group waits for its tasks
             routes[name] = Route(name, sessions, config, audit, detector, limiter)
         else:

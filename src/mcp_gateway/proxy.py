@@ -136,10 +136,18 @@ class Route:
         self, ctx: ServerRequestContext[Any, Any], params: PaginatedRequestParams | None
     ) -> ListToolsResult:
         caller = self._caller(ctx)
+        fields = {"caller": caller, "route": self.name}
+        # Each listing reaches the upstream (and may start its process), so
+        # listings are limited too, on an allowance of their own.
+        limit = await self.limiter.take(caller, "list")
+        if limit is not None:
+            self._try_append("list", decision="rate_limited", limit=limit, **fields)
+            raise MCPError(INVALID_REQUEST, f"Refused by the gateway: this key's listing limit ({limit}) is used up.")
         allowed = allowed_tools(self.config.policy_for(caller), self.name)
-        upstream = await self.upstreams.for_session(session_id_of(ctx))
-        async with self._audited_failures("list", {"caller": caller, "route": self.name}), self._screening_errors():
-            result = await upstream.session.list_tools(params=params)
+        async with self._audited_failures("list", fields):
+            upstream = await self.upstreams.for_session(session_id_of(ctx), caller)
+            async with self._screening_errors():
+                result = await upstream.session.list_tools(params=params)
         tools = [t for t in result.tools if t.name in allowed]
         with stage("screen_tools") as span:
             flagged = await self._screen_tools(tools)
@@ -190,7 +198,7 @@ class Route:
             mark(span, "denied")
             return verdict.reason
         async with self._audited_failures("call", call.record):
-            is_flagged = await self._tool_is_flagged(ctx, call.tool)
+            is_flagged = await self._tool_is_flagged(ctx, call.tool, call.caller)
         if is_flagged:
             mark(span, "tool_hidden")
             return f"tool {call.tool!r} hidden: its definition failed screening"
@@ -229,7 +237,7 @@ class Route:
         async with self._audited_failures("result", call.ids, call.span):
             # Inside this span, so the SDK client parents the upstream request on it.
             with stage("forward"):
-                upstream = await self.upstreams.for_session(session_id_of(ctx))
+                upstream = await self.upstreams.for_session(session_id_of(ctx), call.caller)
                 meta = cast(RequestParamsMeta, call.forwarded_meta)
                 async with self._screening_errors():
                     return await upstream.session.call_tool(call.tool, call.arguments, meta=meta)
@@ -268,7 +276,7 @@ class Route:
             scan_cap = self.config.detector.scan_cap_chars
             raise await screen_error(exc, self.name, self.detector, scan_cap) from exc
 
-    async def _tool_is_flagged(self, ctx: ServerRequestContext[Any, Any], name: str) -> bool:
+    async def _tool_is_flagged(self, ctx: ServerRequestContext[Any, Any], name: str, caller: str) -> bool:
         """For a call: refuse a flagged tool even if the agent never listed
         tools. Unscreened tools are screened on the spot, and a tool the
         upstream no longer lists can't be, so it's refused too."""
@@ -277,7 +285,7 @@ class Route:
         known = self._tool_screen.known_verdict(name)
         if known is not None:
             return known
-        upstream = await self.upstreams.for_session(session_id_of(ctx))
+        upstream = await self.upstreams.for_session(session_id_of(ctx), caller)
         async with self._screening_errors():
             listed = await list_all_tools(upstream)
         definitions = [t for t in listed if t.name == name]

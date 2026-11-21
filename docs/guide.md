@@ -183,7 +183,9 @@ flowchart LR
 | Hash chain | Each audit line carries the hash of the one before, so edits show; `mcp-gateway verify-log` checks it | `audit.py: verify_log` |
 | `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded except for the agent's own connection keys | `calls.py: end_to_end_meta` |
 | Caller stamp | The authenticated caller, added to `_meta` so an upstream can trust who called | `calls.py: CALLER_META_KEY` |
-| Rate limit | A cap on a key's calls per moving window, across all routes. Counts are in memory, so a restart resets them | `ratelimit.py: CallLimiter` |
+| Rate limit | A cap on a key's calls per moving window, across all routes. Tool listings have their own count of the same size. Counts are in memory, so a restart resets them | `ratelimit.py: CallLimiter` |
+| Session caps | How many per-session upstream processes run at once, per key and in total | `config.py: UpstreamSessionLimits`, `upstreams.py: SessionBudget` |
+| Read timeout, byte cap | How long an upstream's answer may take (`read_timeout_s`), and how large an HTTP answer may be (`max_response_bytes`) | `config.py: StdioUpstream`, `HttpUpstream`; `upstreams.py: CappedTransport` |
 | Stdio, HTTP upstream | Stdio: the gateway starts the server as a child process. HTTP: it connects to one already running | `config.py: StdioUpstream`, `HttpUpstream` |
 | Span, trace | One timed step, and the tree of steps for one request (OpenTelemetry) | `tracing.py` |
 | Dev and test split | Dev tunes the detector; test, kept apart, is scored once per detector version | `eval/split.py`, `eval/score.py` |
@@ -204,6 +206,12 @@ flowchart LR
 - **Change what a caller may do:** edit its policy's `routes:`, the tools
   and their argument rules. Policies are YAML (ADR-004).
 - **Limit a key's calls:** set its `rate_limit`, such as `"120/minute"`.
+  Its tool listings get a separate allowance of the same size.
+- **Change how many per-session upstreams run:** `upstream_sessions`
+  (`max_total`, default 32; `max_per_caller`, default 8) in the config.
+- **Change how long an upstream may take, or how large its answer may
+  be:** `read_timeout_s` on the upstream (default 60), and
+  `max_response_bytes` on an HTTP upstream (default 8 MiB).
 - **Change what happens to a suspicious output:** the policy's
   `on_suspicious` (`block`, `annotate` or `log`).
 - **Add an injection pattern:** edit `src/mcp_gateway/rules/injection.yaml`.

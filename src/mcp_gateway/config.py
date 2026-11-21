@@ -33,6 +33,12 @@ class HttpUpstream(_Model):
     # Name of the env var holding the upstream's own key, sent as
     # `Authorization: Bearer`. The agent never sees it (Phase 3).
     auth_env: str | None = None
+    # How long a request may wait for the upstream's answer.
+    read_timeout_s: Annotated[float, Field(gt=0)] = 60.0
+    # The largest HTTP response read from the upstream. 8 MiB is 32 times the
+    # default scan cap, room for JSON escaping; a bigger answer would be
+    # blocked unscanned anyway, after costing the memory to hold it.
+    max_response_bytes: Annotated[int, Field(ge=1)] = 8 * 1024 * 1024
 
 
 class StdioUpstream(_Model):
@@ -46,6 +52,8 @@ class StdioUpstream(_Model):
     # A fresh process for every MCP session, for servers that keep state
     # between calls (ADR-010). Needs session-based clients.
     per_session: bool = False
+    # How long a request may wait for the upstream's answer.
+    read_timeout_s: Annotated[float, Field(gt=0)] = 60.0
 
 
 Upstream = Annotated[HttpUpstream | StdioUpstream, Field(discriminator="transport")]
@@ -93,7 +101,8 @@ class Caller(_Model):
     policy: str
     # Tool calls allowed per window, across all routes, in the `limits`
     # library's notation: "60/minute", or several as "60/minute; 1000/day".
-    # None means no limit.
+    # Tool listings get a separate allowance of the same size. None means no
+    # limit.
     rate_limit: str | None = None
 
     @field_validator("rate_limit")
@@ -134,6 +143,14 @@ class DetectorSettings(_Model):
     scan_tool_descriptions: bool = True
 
 
+class UpstreamSessionLimits(_Model):
+    """Per-session routes start a process per MCP session, and any caller can
+    open sessions, so both totals are capped. Counted across every route."""
+
+    max_total: Annotated[int, Field(ge=1)] = 32
+    max_per_caller: Annotated[int, Field(ge=1)] = 8
+
+
 class AuditSettings(_Model):
     path: Path
     fsync: bool = True
@@ -145,6 +162,7 @@ class GatewayConfig(_Model):
     policies: dict[Annotated[str, Field(pattern=NAME)], Policy]
     audit: AuditSettings
     detector: DetectorSettings = DetectorSettings()
+    upstream_sessions: UpstreamSessionLimits = UpstreamSessionLimits()
     # The Host headers the MCP endpoints answer (the SDK's DNS-rebinding
     # check; "name:*" allows any port). Localhost only unless listed: in a
     # container, apps call the gateway by its service name, "mcp-gateway:*".

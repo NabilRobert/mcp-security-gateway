@@ -25,10 +25,10 @@ from starlette.requests import Request
 from mcp_gateway import __version__
 from mcp_gateway.audit import AuditLog, verify_log
 from mcp_gateway.auth import CallerUser
-from mcp_gateway.config import GatewayConfig
+from mcp_gateway.config import GatewayConfig, UpstreamSessionLimits
 from mcp_gateway.detect import StubDetector, text_for_scanning
 from mcp_gateway.proxy import UPSTREAM_ERROR, Route
-from mcp_gateway.upstreams import PerSessionUpstreams, SharedUpstream
+from mcp_gateway.upstreams import PerSessionUpstreams, SessionBudget, SharedUpstream
 
 pytestmark = pytest.mark.anyio
 
@@ -256,6 +256,10 @@ def test_policy_hash_ignores_key_order_and_follows_the_policy(tmp_path: Path) ->
 # --- the idle reaper --------------------------------------------------------------
 
 
+def budget() -> SessionBudget:
+    return SessionBudget(UpstreamSessionLimits())
+
+
 async def test_an_idle_session_upstream_is_reaped() -> None:
     opened, closed = [], []
 
@@ -268,15 +272,15 @@ async def test_an_idle_session_upstream_is_reaped() -> None:
             closed.append(1)
 
     async with anyio.create_task_group() as tasks:
-        sessions = PerSessionUpstreams("r", open_client, tasks, idle_timeout_s=0.05, reap_every_s=0.02)
-        await sessions.for_session("s1")
+        sessions = PerSessionUpstreams("r", open_client, tasks, budget(), idle_timeout_s=0.05, reap_every_s=0.02)
+        await sessions.for_session("s1", "a")
         assert sessions.running == 1
         for _ in range(100):
             if closed:
                 break
             await anyio.sleep(0.02)
         assert closed == [1] and sessions.running == 0
-        await sessions.for_session("s1")  # a later request starts a fresh one
+        await sessions.for_session("s1", "a")  # a later request starts a fresh one
         assert opened == [1, 1]
         sessions.close_all()
 
@@ -287,9 +291,9 @@ async def test_a_busy_session_upstream_is_kept() -> None:
         yield object()
 
     async with anyio.create_task_group() as tasks:
-        sessions = PerSessionUpstreams("r", open_client, tasks, idle_timeout_s=0.2, reap_every_s=0.02)
+        sessions = PerSessionUpstreams("r", open_client, tasks, budget(), idle_timeout_s=0.2, reap_every_s=0.02)
         for _ in range(15):
-            await sessions.for_session("s1")
+            await sessions.for_session("s1", "a")
             await anyio.sleep(0.02)
         assert sessions.running == 1 and sessions.started == 1
         sessions.close_all()
