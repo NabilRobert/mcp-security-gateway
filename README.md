@@ -77,6 +77,15 @@ from injection families no rule was written from.
 | Rules | 0.0% | 14.6% | 100% |
 | **Rules + model** (fp32, threshold 0.999) | **1.1%** | **49.7%** | **96.3%** |
 
+Scan s6 (the security fixes: repeated JSON keys, invisible and look-alike
+characters) was scored once on test too. Recall is the same in every
+family, and the rules alone are unchanged (0.0% / 14.6%). Rules + model
+came out at 1.6% false positives (18 of 1,119, against 12). The model read
+exactly the same text for every sample, and the rules flag no normal
+output, so the 6 extra are the 6 extra timeouts: 8 scans timed out on a
+busy laptop, against 2 before, and each timeout counts as flagged
+([`eval/results/`](eval/results/)).
+
 What it shows:
 - **The rules don't generalise.** They catch 100% of the dev split they
   were written from, and 14.6% of unseen phrasings.
