@@ -132,10 +132,12 @@ flowchart LR
 - `Route._list_tools` filters the upstream's tools by policy, then
   `tool_screen.py: ToolScreen.flagged` scans everything a model can read of
   each one (`tool_screen.py: tool_text`) with the same detector: its name, titles,
-  description and the text in its schemas.
+  description, and every string and custom key in its schemas (only the
+  usual values of `type`, `format` and `$schema` stay out).
 - A flagged tool is hidden and gets one `tool_flagged` audit line. Verdicts
   are cached by the definition's hash, so a changed description is scanned
-  again.
+  again, and the change gets a `tool_changed` line (a tool that changes
+  after it was screened is the "rug pull" pattern).
 - `Route._tool_is_flagged` refuses calls to a flagged tool, even if the
   agent never listed tools. It screens against every page of the upstream's
   tools (`upstreams.py: list_all_tools`), and refuses a tool it can't find.

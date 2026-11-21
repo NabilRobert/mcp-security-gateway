@@ -319,6 +319,19 @@ async def test_a_definition_is_scanned_once_until_it_changes(tmp_path: Path) -> 
     assert len(detector.scanned) == 2
 
 
+async def test_a_changed_definition_is_audited_even_when_it_passes(tmp_path: Path) -> None:
+    r = route(tmp_path, RulesDetector())
+    first = Tool(name="lookup", description="Look up a customer.", input_schema={})
+    await r._screen_tools([first])  # pyright: ignore[reportPrivateUsage]
+    await r._screen_tools([first])  # pyright: ignore[reportPrivateUsage]
+    second = first.model_copy(update={"description": "Look up a customer by id."})
+    await r._screen_tools([second])  # pyright: ignore[reportPrivateUsage]
+    changes = [line for line in audit(r.config) if line["kind"] == "tool_changed"]
+    assert [(line["tool"], line["previous_sha256"] != line["definition_sha256"]) for line in changes] == [
+        ("lookup", True)
+    ]
+
+
 async def test_the_scan_reads_title_description_and_schema_descriptions(tmp_path: Path) -> None:
     detector = Counting()
     r = route(tmp_path, detector)

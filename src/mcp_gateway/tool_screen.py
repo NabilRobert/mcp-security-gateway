@@ -84,8 +84,9 @@ def schema_text(schema: Any) -> list[str]:
 
 class ToolScreen:
     """A route's verdicts on its tools. A definition is scanned once per
-    version of its text; a flag is audited when first seen. A detector failure
-    hides the tool without caching it."""
+    version of its text; a flag, and a change to a screened definition, are
+    audited when first seen. A detector failure hides the tool without
+    caching it."""
 
     def __init__(self, route: str, detector: Detector, audit: Callable[..., None]) -> None:
         self.route = route
@@ -115,6 +116,10 @@ class ToolScreen:
         if cached is not None and cached[0] == digest:
             return cached[1]
         line = {"route": self.route, "tool": name, "definition_sha256": digest}
+        if cached is not None:
+            # A tool that changes after it was screened is the "rug pull"
+            # pattern: worth a line even when the new version passes too.
+            self.audit("tool_changed", **line, previous_sha256=cached[0])
         try:
             verdict = await self.detector.scan(text)
         except Exception as exc:  # fail closed: hidden for now, not cached, so the next listing retries
