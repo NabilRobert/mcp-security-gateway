@@ -32,7 +32,8 @@ RULES_FILE = Path(__file__).parent / "rules" / "injection.yaml"
 # Bumped when the scanning code changes, so results from an older
 # implementation can't pass as this one's. s5 also scans JSON keys that read
 # like prose, on their own (s3 and s4 were earlier attempts; see ADR-005). s6
-# scans every value of a repeated JSON key.
+# scans every value of a repeated JSON key, and the rules read text with
+# invisible characters dropped and look-alike letters folded.
 SCAN_IMPLEMENTATION = "s6"
 # Four words: "ignore all previous instructions". Field names are shorter.
 MIN_WORDS_IN_PROSE_KEY = 4
@@ -148,10 +149,26 @@ async def scan_output(detector: Detector, text: str, keys: str) -> DetectorVerdi
     return replace(key_verdict, ms=verdict.ms + key_verdict.ms) if key_verdict.suspicious else verdict
 
 
+# Cyrillic and Greek letters that look like Latin ones, and the dotless i,
+# none of which NFKC folds (single-letter entries of Unicode's
+# confusables.txt). "Ignore" spelt with a Cyrillic o (U+043E) reads the same
+# to a model, but no pattern matches it. Each letter becomes the one in the
+# same place on the second line.
+LOOK_ALIKES = str.maketrans(
+    "аеһіјорсѕухԁԛԝӏАВЕКМНОРСТХІЈЅҮԚԜονιαρυıΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
+    "aehijopcsyxdqwlABEKMHOPCTXIJSYQWoviapuiABEZHIKMNOPTYX",
+)
+
+
 def _normalise(text: str) -> str:
-    # NFKC folds look-alike characters (full-width letters and the like);
-    # collapsing whitespace stops a line break from splitting a phrase.
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text))
+    """The text the rules read. NFKC folds full-width letters and the like.
+    Format characters (zero-width space, word joiner, soft hyphen) are
+    dropped, since they split a word for a pattern but not for a reader, as
+    ai-flight-school's `normalised` does. Look-alike letters become Latin,
+    and collapsing whitespace stops a line break from splitting a phrase."""
+    folded = unicodedata.normalize("NFKC", text)
+    visible = "".join(char for char in folded if unicodedata.category(char) != "Cf")
+    return re.sub(r"\s+", " ", visible.translate(LOOK_ALIKES))
 
 
 class RulesDetector:
