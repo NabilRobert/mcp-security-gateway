@@ -199,7 +199,9 @@ flowchart LR
 
 - **Run the checks** (the same ones CI runs): `uv sync --locked --python 3.12`,
   then `uv run ruff check .`, `uv run ruff format --check .`,
-  `uv run pyright` and `uv run pytest -q`.
+  `uv run pyright` and `uv run pytest -q`. CI also scans every commit for
+  secrets with `gitleaks git --redact .`; its few exceptions, each explained,
+  are in `.gitleaks.toml`.
 - **Add an upstream server:** add it under `upstreams:` in your config
   (see `examples/gateway.yaml`), then allow its tools in a policy. The
   gateway checks at start-up that every allowed tool exists.
