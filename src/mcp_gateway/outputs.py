@@ -70,8 +70,13 @@ ANNOTATION = (
 )
 
 
+def error_result(message: str) -> CallToolResult:
+    """A tool result the agent reads as a failure, with the gateway's reason."""
+    return CallToolResult(content=[TextContent(type="text", text=message)], is_error=True)
+
+
 def blocked_result(why: str) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=BLOCK_NOTICE.format(why=why))], is_error=True)
+    return error_result(BLOCK_NOTICE.format(why=why))
 
 
 def annotated_result(result: CallToolResult) -> CallToolResult:

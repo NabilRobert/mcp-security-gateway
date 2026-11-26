@@ -19,13 +19,15 @@ from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import anyio
 import httpx2
 from anyio.abc import TaskGroup
 from mcp import Client, StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server import ServerRequestContext
+from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
 from mcp.shared.exceptions import MCPError
 from mcp.types import PaginatedRequestParams, Tool
 from mcp_types.jsonrpc import INVALID_REQUEST
@@ -122,6 +124,14 @@ async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) ->
         ) as client,
     ):
         yield client
+
+
+def session_id_of(ctx: ServerRequestContext[Any, Any]) -> str | None:
+    """The request's `Mcp-Session-Id`, or None for a sessionless client."""
+    request = ctx.request
+    headers = getattr(request, "headers", None)
+    value = headers.get(MCP_SESSION_ID_HEADER) if headers is not None else None
+    return value if isinstance(value, str) and value else None
 
 
 class Upstreams(Protocol):
