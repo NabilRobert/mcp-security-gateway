@@ -50,6 +50,11 @@ from mcp_gateway.tool_screen import ToolScreen, tool_text
 from mcp_gateway.tracing import mark, stage
 from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams, list_all_tools
 
+# How many session bindings are kept before a new one triggers a sweep of
+# those idle past the SDK's timeout. Each costs a few hundred bytes, so this
+# many is a few MB, and below it no request pays for the scan.
+MAX_TRACKED_SESSIONS = 10_000
+
 # Public names other modules and the tests take from here.
 __all__ = ["REDACTED", "UPSTREAM_ERROR", "Route", "annotated_result", "redact", "scan_text", "tool_text"]
 
@@ -111,7 +116,7 @@ class Route:
 
     def bind_session(self, session: str, caller: str) -> None:
         now = time.monotonic()
-        if session not in self._session_callers and len(self._session_callers) > 10_000:
+        if session not in self._session_callers and len(self._session_callers) > MAX_TRACKED_SESSIONS:
             self._forget_idle(now)
         self._session_callers[session] = (caller, now)
 

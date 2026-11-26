@@ -17,6 +17,10 @@ from limits import parse_many
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 NAME = r"^[a-z0-9][a-z0-9-]{0,62}$"
+# How long a request waits for an upstream's answer unless its config says
+# otherwise: generous for a slow query, short enough that a hung upstream
+# frees the call within a minute.
+DEFAULT_READ_TIMEOUT_S = 60.0
 
 
 class ConfigError(Exception):
@@ -34,7 +38,7 @@ class HttpUpstream(_Model):
     # `Authorization: Bearer`. The agent never sees it (Phase 3).
     auth_env: str | None = None
     # How long a request may wait for the upstream's answer.
-    read_timeout_s: Annotated[float, Field(gt=0)] = 60.0
+    read_timeout_s: Annotated[float, Field(gt=0)] = DEFAULT_READ_TIMEOUT_S
     # The largest HTTP response read from the upstream. 8 MiB is 32 times the
     # default scan cap, room for JSON escaping; a bigger answer would be
     # blocked unscanned anyway, after costing the memory to hold it.
@@ -53,7 +57,7 @@ class StdioUpstream(_Model):
     # between calls (ADR-010). Needs session-based clients.
     per_session: bool = False
     # How long a request may wait for the upstream's answer.
-    read_timeout_s: Annotated[float, Field(gt=0)] = 60.0
+    read_timeout_s: Annotated[float, Field(gt=0)] = DEFAULT_READ_TIMEOUT_S
 
 
 Upstream = Annotated[HttpUpstream | StdioUpstream, Field(discriminator="transport")]

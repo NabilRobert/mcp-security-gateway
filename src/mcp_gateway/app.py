@@ -41,6 +41,10 @@ from mcp_gateway.tracing import configure_tracing, shutdown_tracing
 from mcp_gateway.upstreams import CappedTransport, PerSessionUpstreams, SessionBudget, SharedUpstream, list_all_tools
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
+# Connecting to an HTTP upstream, sending a request and waiting for a pooled
+# connection: none of these should take long, so a dead upstream fails here
+# rather than at the read timeout. Reads have their own limit, per upstream.
+HTTP_TIMEOUT_S = 30.0
 
 
 @contextlib.asynccontextmanager
@@ -56,7 +60,7 @@ async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) ->
     async with (
         httpx2.AsyncClient(
             headers=headers,
-            timeout=httpx2.Timeout(30.0, read=upstream.read_timeout_s),
+            timeout=httpx2.Timeout(HTTP_TIMEOUT_S, read=upstream.read_timeout_s),
             transport=CappedTransport(httpx2.AsyncHTTPTransport(), upstream.max_response_bytes),
         ) as http,
         Client(
