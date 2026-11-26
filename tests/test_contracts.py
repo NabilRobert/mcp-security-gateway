@@ -28,7 +28,7 @@ from mcp_gateway.auth import CallerUser
 from mcp_gateway.config import GatewayConfig, UpstreamSessionLimits
 from mcp_gateway.detect import StubDetector, text_for_scanning
 from mcp_gateway.proxy import UPSTREAM_ERROR, Route
-from mcp_gateway.upstreams import PerSessionUpstreams, SessionBudget, SharedUpstream
+from mcp_gateway.upstreams import PerSessionUpstreams, Reaping, SessionBudget, SharedUpstream
 
 pytestmark = pytest.mark.anyio
 
@@ -272,7 +272,7 @@ async def test_an_idle_session_upstream_is_reaped() -> None:
             closed.append(1)
 
     async with anyio.create_task_group() as tasks:
-        sessions = PerSessionUpstreams("r", open_client, tasks, budget(), idle_timeout_s=0.05, reap_every_s=0.02)
+        sessions = PerSessionUpstreams("r", open_client, tasks, budget(), Reaping(idle_timeout_s=0.05, every_s=0.02))
         await sessions.for_session("s1", "a")
         assert sessions.running == 1
         for _ in range(100):
@@ -291,7 +291,7 @@ async def test_a_busy_session_upstream_is_kept() -> None:
         yield object()
 
     async with anyio.create_task_group() as tasks:
-        sessions = PerSessionUpstreams("r", open_client, tasks, budget(), idle_timeout_s=0.2, reap_every_s=0.02)
+        sessions = PerSessionUpstreams("r", open_client, tasks, budget(), Reaping(idle_timeout_s=0.2, every_s=0.02))
         for _ in range(15):
             await sessions.for_session("s1", "a")
             await anyio.sleep(0.02)

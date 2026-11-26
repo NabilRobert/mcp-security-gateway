@@ -180,6 +180,15 @@ class SessionBudget:
             del self._open_by_caller[caller]
 
 
+@dataclass(frozen=True)
+class Reaping:
+    """When an idle session's upstream is stopped: after `idle_timeout_s`
+    without a request, checked every `every_s`. Tests shorten both."""
+
+    idle_timeout_s: float = IDLE_TIMEOUT_S
+    every_s: float = REAP_EVERY_S
+
+
 @dataclass(eq=False)
 class _Entry:
     caller: str
@@ -191,25 +200,24 @@ class _Entry:
 
 
 class PerSessionUpstreams:
-    def __init__(  # noqa: PLR0913 (the two timings are keyword-only, with defaults, for tests)
+    def __init__(
         self,
         name: str,
         open_client: Callable[[], AbstractAsyncContextManager[Client]],
         tasks: TaskGroup,
         budget: SessionBudget,
-        *,
-        idle_timeout_s: float = IDLE_TIMEOUT_S,
-        reap_every_s: float = REAP_EVERY_S,
+        reaping: Reaping | None = None,
     ) -> None:
+        reaping = reaping or Reaping()
         self.name = name
         self._open = open_client
         self._tasks = tasks
         self._budget = budget
         self._entries: dict[str, _Entry] = {}
-        self.idle_timeout_s = idle_timeout_s
+        self.idle_timeout_s = reaping.idle_timeout_s
         self.started = 0  # processes started, for tests
         self._reaper = anyio.CancelScope()
-        tasks.start_soon(self._reap, reap_every_s)
+        tasks.start_soon(self._reap, reaping.every_s)
 
     @property
     def running(self) -> int:
