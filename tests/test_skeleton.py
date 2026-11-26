@@ -10,9 +10,9 @@ import pytest
 from conftest import KEY_A, FakeUpstream, RunningGateway, agent, make_config, running_gateway
 from mcp import Client
 
-from mcp_gateway.app import connect_upstream
 from mcp_gateway.audit import verify_chain
 from mcp_gateway.config import GatewayConfig
+from mcp_gateway.upstreams import connect_upstream
 
 pytestmark = pytest.mark.anyio
 

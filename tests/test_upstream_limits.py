@@ -19,9 +19,8 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import TextContent
 from test_per_session import Counter, legacy_agent, per_session_config
 
-from mcp_gateway.app import connect_upstream
 from mcp_gateway.config import GatewayConfig, UpstreamSessionLimits
-from mcp_gateway.upstreams import CappedTransport, PerSessionUpstreams, SessionBudget
+from mcp_gateway.upstreams import CappedTransport, PerSessionUpstreams, SessionBudget, connect_upstream
 
 pytestmark = pytest.mark.anyio
 

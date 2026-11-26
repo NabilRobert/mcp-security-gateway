@@ -18,8 +18,8 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from meta_echo_server import TOOL, build
 
-from mcp_gateway.app import connect_upstream
 from mcp_gateway.config import GatewayConfig
+from mcp_gateway.upstreams import connect_upstream
 
 pytestmark = pytest.mark.anyio
 

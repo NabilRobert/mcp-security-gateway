@@ -17,8 +17,8 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
 
-from mcp_gateway.app import connect_upstream
 from mcp_gateway.config import GatewayConfig
+from mcp_gateway.upstreams import connect_upstream
 
 pytestmark = pytest.mark.anyio
 

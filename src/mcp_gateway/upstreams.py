@@ -12,6 +12,8 @@ idle timeout. A client's lifetime is owned by its own task, because an SDK
 client must be closed in the task that opened it.
 """
 
+import contextlib
+import os
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Callable
@@ -22,12 +24,13 @@ from typing import Protocol, cast
 import anyio
 import httpx2
 from anyio.abc import TaskGroup
-from mcp import Client
+from mcp import Client, StdioServerParameters
+from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import MCPError
 from mcp.types import PaginatedRequestParams, Tool
 from mcp_types.jsonrpc import INVALID_REQUEST
 
-from mcp_gateway.config import UpstreamSessionLimits
+from mcp_gateway.config import HttpUpstream, StdioUpstream, UpstreamSessionLimits
 
 IDLE_TIMEOUT_S = 30 * 60  # the SDK's DEFAULT_SESSION_IDLE_TIMEOUT
 REAP_EVERY_S = 60.0
@@ -90,6 +93,35 @@ class CappedTransport(httpx2.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self._inner.aclose()
+
+
+# Connecting to an HTTP upstream, sending a request and waiting for a pooled
+# connection: none of these should take long, so a dead upstream fails here
+# rather than at the read timeout. Reads have their own limit, per upstream.
+HTTP_TIMEOUT_S = 30.0
+
+
+@contextlib.asynccontextmanager
+async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) -> AsyncIterator[Client]:  # noqa: ARG001
+    if isinstance(upstream, StdioUpstream):
+        async with Client(
+            StdioServerParameters(command=upstream.command, args=upstream.args, cwd=upstream.cwd),
+            read_timeout_seconds=upstream.read_timeout_s,
+        ) as client:
+            yield client
+        return
+    headers = {"Authorization": f"Bearer {os.environ[upstream.auth_env]}"} if upstream.auth_env else {}
+    async with (
+        httpx2.AsyncClient(
+            headers=headers,
+            timeout=httpx2.Timeout(HTTP_TIMEOUT_S, read=upstream.read_timeout_s),
+            transport=CappedTransport(httpx2.AsyncHTTPTransport(), upstream.max_response_bytes),
+        ) as http,
+        Client(
+            streamable_http_client(upstream.url, http_client=http), read_timeout_seconds=upstream.read_timeout_s
+        ) as client,
+    ):
+        yield client
 
 
 class Upstreams(Protocol):

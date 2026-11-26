@@ -19,12 +19,10 @@ from types import FrameType
 from typing import Any, cast
 
 import anyio
-import httpx2
 import uvicorn
 from anyio.abc import TaskGroup
 from fastapi import FastAPI
-from mcp import Client, StdioServerParameters
-from mcp.client.streamable_http import streamable_http_client
+from mcp import Client
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import HTTPConnection
@@ -38,36 +36,15 @@ from mcp_gateway.proxy import Route
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.sessions import SessionGuard
 from mcp_gateway.tracing import configure_tracing, shutdown_tracing
-from mcp_gateway.upstreams import CappedTransport, PerSessionUpstreams, SessionBudget, SharedUpstream, list_all_tools
+from mcp_gateway.upstreams import (
+    PerSessionUpstreams,
+    SessionBudget,
+    SharedUpstream,
+    connect_upstream,
+    list_all_tools,
+)
 
 Connect = Callable[[str, HttpUpstream | StdioUpstream], AbstractAsyncContextManager[Client]]
-# Connecting to an HTTP upstream, sending a request and waiting for a pooled
-# connection: none of these should take long, so a dead upstream fails here
-# rather than at the read timeout. Reads have their own limit, per upstream.
-HTTP_TIMEOUT_S = 30.0
-
-
-@contextlib.asynccontextmanager
-async def connect_upstream(name: str, upstream: HttpUpstream | StdioUpstream) -> AsyncIterator[Client]:  # noqa: ARG001
-    if isinstance(upstream, StdioUpstream):
-        async with Client(
-            StdioServerParameters(command=upstream.command, args=upstream.args, cwd=upstream.cwd),
-            read_timeout_seconds=upstream.read_timeout_s,
-        ) as client:
-            yield client
-        return
-    headers = {"Authorization": f"Bearer {os.environ[upstream.auth_env]}"} if upstream.auth_env else {}
-    async with (
-        httpx2.AsyncClient(
-            headers=headers,
-            timeout=httpx2.Timeout(HTTP_TIMEOUT_S, read=upstream.read_timeout_s),
-            transport=CappedTransport(httpx2.AsyncHTTPTransport(), upstream.max_response_bytes),
-        ) as http,
-        Client(
-            streamable_http_client(upstream.url, http_client=http), read_timeout_seconds=upstream.read_timeout_s
-        ) as client,
-    ):
-        yield client
 
 
 @dataclass(frozen=True)
