@@ -34,8 +34,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from mcp_gateway.detect import LayeredDetector, ModelDetector, RulesDetector  # noqa: E402
+from mcp_gateway.detect import LayeredDetector, ModelDetector  # noqa: E402
 from mcp_gateway.eval.score import Sample, load_samples  # noqa: E402
+from mcp_gateway.rules_layer import RulesDetector  # noqa: E402
 
 OUT = ROOT / "eval" / "results" / "model-comparison"
 THRESHOLDS = (0.99, 0.995, 0.999)

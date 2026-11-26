@@ -18,8 +18,9 @@ from test_detection import INJECTION
 
 from mcp_gateway.audit import AuditLog
 from mcp_gateway.config import GatewayConfig
-from mcp_gateway.detect import DetectorVerdict, RulesDetector
+from mcp_gateway.detect import DetectorVerdict
 from mcp_gateway.proxy import Route, tool_text
+from mcp_gateway.rules_layer import RulesDetector
 from mcp_gateway.upstreams import list_all_tools
 
 pytestmark = pytest.mark.anyio

@@ -1,7 +1,7 @@
 """Prompt-injection detection on tool outputs (ADR-005).
 
-Two layers behind one interface: pattern rules, then a small local
-classifier (ProtectAI's deberta-v3-base-prompt-injection-v2, run with ONNX
+Two layers behind one interface: pattern rules (`rules_layer.py`), then a
+small local classifier (ProtectAI's deberta-v3-base-prompt-injection-v2, run with ONNX
 on CPU). An output is suspicious if any layer flags it. Both layers read
 the same text: a JSON output's string values only, because Spike 4 showed
 the classifier reacts to the JSON envelope itself (54% false positives on
@@ -16,19 +16,16 @@ import json
 import re
 import threading
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import anyio
-import yaml
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
 
-RULES_FILE = Path(__file__).parent / "rules" / "injection.yaml"
 # Bumped when the scanning code changes, so results from an older
 # implementation can't pass as this one's. s5 also scans JSON keys that read
 # like prose, on their own (s3 and s4 were earlier attempts; see ADR-005). s6
@@ -147,51 +144,6 @@ async def scan_output(detector: Detector, text: str, keys: str) -> DetectorVerdi
         return verdict
     key_verdict = await detector.scan(keys)
     return replace(key_verdict, ms=verdict.ms + key_verdict.ms) if key_verdict.suspicious else verdict
-
-
-# Cyrillic and Greek letters that look like Latin ones, and the dotless i,
-# none of which NFKC folds (single-letter entries of Unicode's
-# confusables.txt). "Ignore" spelt with a Cyrillic o (U+043E) reads the same
-# to a model, but no pattern matches it. Each letter becomes the one in the
-# same place on the second line.
-LOOK_ALIKES = str.maketrans(
-    "аеһіјорсѕухԁԛԝӏАВЕКМНОРСТХІЈЅҮԚԜονιαρυıΑΒΕΖΗΙΚΜΝΟΡΤΥΧ",
-    "aehijopcsyxdqwlABEKMHOPCTXIJSYQWoviapuiABEZHIKMNOPTYX",
-)
-
-
-def _normalise(text: str) -> str:
-    """The text the rules read. NFKC folds full-width letters and the like.
-    Format characters (zero-width space, word joiner, soft hyphen) are
-    dropped, since they split a word for a pattern but not for a reader, as
-    ai-flight-school's `normalised` does. Look-alike letters become Latin,
-    and collapsing whitespace stops a line break from splitting a phrase."""
-    folded = unicodedata.normalize("NFKC", text)
-    visible = "".join(char for char in folded if unicodedata.category(char) != "Cf")
-    return re.sub(r"\s+", " ", visible.translate(LOOK_ALIKES))
-
-
-class RulesDetector:
-    def __init__(self, path: Path = RULES_FILE) -> None:
-        raw = path.read_bytes()
-        spec = yaml.safe_load(raw)
-        self.rules = [(r["id"], re.compile(r["pattern"], re.IGNORECASE)) for r in spec["rules"]]
-        self.version = f"rules-{hashlib.sha256(raw).hexdigest()[:12]}-{SCAN_IMPLEMENTATION}"
-
-    def match(self, text: str) -> tuple[str, ...]:
-        normalised = _normalise(text)
-        return tuple(rule_id for rule_id, pattern in self.rules if pattern.search(normalised))
-
-    async def scan(self, text: str) -> DetectorVerdict:
-        start = time.perf_counter()
-        matched = self.match(text_for_scanning(text))
-        return DetectorVerdict(
-            suspicious=bool(matched),
-            score=1.0 if matched else 0.0,
-            layer="rules",
-            matched=matched,
-            ms=(time.perf_counter() - start) * 1000,
-        )
 
 
 def load_tokenizer(path: Path) -> "Tokenizer":

@@ -31,9 +31,10 @@ from mcp_gateway import __version__
 from mcp_gateway.audit import AuditError, AuditLog, verify_chain
 from mcp_gateway.auth import ApiKeyBackend, KeyRejected, unauthorized_handler
 from mcp_gateway.config import ConfigError, DetectorSettings, GatewayConfig, HttpUpstream, StdioUpstream
-from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, RulesDetector, StubDetector
+from mcp_gateway.detect import Detector, LayeredDetector, ModelDetector, StubDetector
 from mcp_gateway.proxy import Route
 from mcp_gateway.ratelimit import CallLimiter
+from mcp_gateway.rules_layer import RulesDetector
 from mcp_gateway.sessions import SessionGuard
 from mcp_gateway.tracing import configure_tracing, shutdown_tracing
 from mcp_gateway.upstreams import (

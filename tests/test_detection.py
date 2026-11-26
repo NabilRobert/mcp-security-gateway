@@ -16,7 +16,6 @@ from mcp_gateway.config import GatewayConfig
 from mcp_gateway.detect import (
     DetectorVerdict,
     LayeredDetector,
-    RulesDetector,
     StubDetector,
     json_keys,
     keys_for_scanning,
@@ -26,6 +25,7 @@ from mcp_gateway.detect import (
 from mcp_gateway.eval.score import Score, load_samples, record_test_score
 from mcp_gateway.eval.split import benign_split
 from mcp_gateway.proxy import annotated_result
+from mcp_gateway.rules_layer import RulesDetector
 
 pytestmark = pytest.mark.anyio
 

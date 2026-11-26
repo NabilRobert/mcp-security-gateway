@@ -184,7 +184,7 @@ after a clean stop. CI runs it too.
 
 | Path | What's there |
 |---|---|
-| `src/mcp_gateway/` | The gateway: `config`, `auth`, `policy`, `ratelimit`, `proxy` (and `calls`, `outputs`, `tool_screen`), `sessions`, `upstreams`, `detect`, `audit`, `tracing`, `app`, `cli`; `rules/` holds the detector's patterns, and `eval/` scores the detector offline |
+| `src/mcp_gateway/` | The gateway: `config`, `auth`, `policy`, `ratelimit`, `proxy` (and `calls`, `outputs`, `tool_screen`), `sessions`, `upstreams`, `detect` (and `rules_layer`), `audit`, `tracing`, `app`, `cli`; `rules/` holds the detector's patterns, and `eval/` scores the detector offline |
 | `tests/` | The test suite (no network and no model unless asked for) |
 | `eval/` | The labelled set (`benign/`, `injections/`) and every published result (`results/`) |
 | `scripts/` | The measurements behind the numbers above, and the builder of the benign set |

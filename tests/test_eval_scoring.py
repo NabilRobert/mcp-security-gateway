@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from mcp_gateway.detect import DetectorVerdict, RulesDetector
+from mcp_gateway.detect import DetectorVerdict
 from mcp_gateway.eval.score import HOSTS_PER_TEMPLATE, Sample, load_samples, plant, record_test_score, score
 from mcp_gateway.eval.split import benign_split
+from mcp_gateway.rules_layer import RulesDetector
 
 pytestmark = pytest.mark.anyio
 

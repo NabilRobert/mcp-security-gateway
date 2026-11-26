@@ -79,7 +79,7 @@ sequenceDiagram
    - `outputs.py: unscanned_reason` blocks what can't be read (images,
      audio, text past the scan cap), unless the policy allows it.
    - `detect.py: LayeredDetector.scan` runs the layers in order and stops
-     at the first flag. `detect.py: RulesDetector.scan` matches the patterns
+     at the first flag. `rules_layer.py: RulesDetector.scan` matches the patterns
      in `rules/injection.yaml`. `detect.py: ModelDetector.scan` runs
      ProtectAI's classifier in 512-token windows, under a 2 s timeout. An
      output needing more than `max_windows` windows is flagged unread.
@@ -173,7 +173,7 @@ flowchart LR
 | Argument rule | A path prefix or a full-match pattern an argument must meet | `config.py: ArgRule` |
 | Prompt injection | Text in a tool's output (or description) written to make the model do something else | `THREAT_MODEL.md` |
 | Detector | What scans text for injections; its `version` is recorded on every result line | `detect.py: Detector` |
-| Rules layer | Hand-written patterns: fast, precise, narrow | `detect.py: RulesDetector`, `rules/injection.yaml` |
+| Rules layer | Hand-written patterns: fast, precise, narrow | `rules_layer.py: RulesDetector`, `rules/injection.yaml` |
 | Model layer | ProtectAI's DeBERTa classifier, run locally with onnxruntime | `detect.py: ModelDetector` |
 | ONNX, onnxruntime | A file format for models, and the library that runs them on the CPU without PyTorch | `detect.py: ModelDetector` |
 | Threshold | The model's score at or above which text is flagged (0.999 in the example config) | `config.py: ModelSettings` |
