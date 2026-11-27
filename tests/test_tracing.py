@@ -17,6 +17,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import SpanKind, StatusCode
 from test_detection import INJECTION
 from test_meta_passthrough import PROTOCOL_PREFIX, echo_gateway, meta_seen_upstream
+from test_upstream_errors import config as upstream_errors_config
+from test_upstream_errors import error_from_call, failing_upstream
 
 from mcp_gateway import app, tracing
 from mcp_gateway.config import GatewayConfig
@@ -31,7 +33,7 @@ MCP_SDK = "mcp-python-sdk"
 def spans() -> Iterator[InMemorySpanExporter]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    provider.add_span_processor(tracing.FreeTextFilter(SimpleSpanProcessor(exporter)))  # as the exporter gets them
     TRACING.active = provider
     try:
         yield exporter
@@ -178,6 +180,30 @@ def closed_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])  # closed again on return: nothing listens
+
+
+async def test_an_upstream_error_message_reaches_no_span(tmp_path: Path, spans: InMemorySpanExporter) -> None:
+    """The SDK's `tools/call` span copies the error into its status."""
+    await error_from_call(upstream_errors_config(tmp_path), failing_upstream(f"no such row: {SENTINEL}"))
+    finished = spans.get_finished_spans()
+    assert any(s.status.status_code == StatusCode.ERROR for s in finished)
+    assert SENTINEL not in everything_in(finished)
+
+
+def test_an_exception_event_keeps_its_type_but_not_its_message() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(tracing.FreeTextFilter(SimpleSpanProcessor(exporter)))
+    with provider.get_tracer("t").start_as_current_span("s") as span:
+        span.record_exception(ValueError(SENTINEL))
+    [finished] = exporter.get_finished_spans()
+    assert [dict(e.attributes or {}).get("exception.type") for e in finished.events] == ["ValueError"]
+    assert SENTINEL not in everything_in((finished,))
+
+
+def test_the_exporter_gets_spans_without_free_text() -> None:
+    processor = tracing.build_span_processor({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://x:4318"})
+    assert isinstance(processor, tracing.FreeTextFilter)
 
 
 def test_no_endpoint_no_exporter() -> None:

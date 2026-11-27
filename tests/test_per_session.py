@@ -17,8 +17,8 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server import MCPServer
 
-from mcp_gateway.app import connect_upstream
 from mcp_gateway.config import GatewayConfig, HttpUpstream, StdioUpstream
+from mcp_gateway.upstreams import connect_upstream
 
 pytestmark = pytest.mark.anyio
 

@@ -1,9 +1,14 @@
 """Per-key call limits, on the `limits` library (moving window, in memory).
 
 A caller's `rate_limit` (e.g. "60/minute; 1000/day") counts its tool
-calls across every route. Counts live in the gateway process: a restart
+calls across every route. Tool listings get a separate allowance of the
+same size: clients list before they call, so sharing one count would halve
+the calls a key gets, but listings reach the upstream too and mustn't be
+free. Counts live in the gateway process: a restart
 resets them, and two gateway processes count separately.
 """
+
+from typing import Literal
 
 import anyio
 from limits import RateLimitItem, parse_many
@@ -25,13 +30,13 @@ class CallLimiter:
         # refused by one limit mustn't use up another.
         self._lock = anyio.Lock()
 
-    async def take(self, caller_id: str) -> str | None:
-        """None if the call may go ahead (and it is counted), else the limit it hit."""
+    async def take(self, caller_id: str, kind: Literal["call", "list"] = "call") -> str | None:
+        """None if the request may go ahead (and it is counted), else the limit it hit."""
         items = self._limits.get(caller_id, [])
         async with self._lock:
             for item in items:
-                if not await self._limiter.test(item, caller_id):
+                if not await self._limiter.test(item, kind, caller_id):
                     return str(item)
             for item in items:
-                await self._limiter.hit(item, caller_id)
+                await self._limiter.hit(item, kind, caller_id)
         return None

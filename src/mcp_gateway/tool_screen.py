@@ -11,9 +11,41 @@ from mcp.types import Tool
 
 from mcp_gateway.detect import Detector, json_keys, string_leaves
 
-SCHEMA_STRUCTURE_KEYWORDS = frozenset({"$schema", "$id", "$ref", "type", "format", "required"})
+# The usual values of `type`, `format` and `$schema` are fixed tokens, not
+# text a model is meant to read, so they stay out of the scan. Any other
+# value under those keywords is scanned, since a model reads it all the same.
+JSON_TYPES = frozenset({"string", "number", "integer", "boolean", "object", "array", "null"})
+# JSON Schema 2020-12's formats, plus OpenAPI's.
+FORMATS = frozenset({
+    "date-time", "date", "time", "duration", "email", "idn-email", "hostname", "idn-hostname",
+    "ipv4", "ipv6", "uri", "uri-reference", "iri", "iri-reference", "uuid", "uri-template",
+    "json-pointer", "relative-json-pointer", "regex",
+    "int32", "int64", "float", "double", "byte", "binary", "password",
+})  # fmt: skip
+META_SCHEMAS = frozenset({
+    "http://json-schema.org/draft-04/schema#", "http://json-schema.org/draft-06/schema#",
+    "http://json-schema.org/draft-07/schema#", "https://json-schema.org/draft/2019-09/schema",
+    "https://json-schema.org/draft/2020-12/schema",
+})  # fmt: skip
+KNOWN_VALUES = {"type": JSON_TYPES, "format": FORMATS, "$schema": META_SCHEMAS}
 SCHEMA_DATA_KEYWORDS = frozenset({"default", "const", "enum", "examples"})
 SCHEMA_NAME_KEYWORDS = frozenset({"properties", "patternProperties", "$defs", "definitions"})
+# Every keyword of JSON Schema drafts 4 to 2020-12. A key outside this list
+# is a custom one ("x-note"), and its name is text a model reads.
+SCHEMA_KEYWORDS = frozenset(
+    {
+        "$schema", "$id", "id", "$ref", "$anchor", "$dynamicRef", "$dynamicAnchor", "$recursiveRef",
+        "$recursiveAnchor", "$vocabulary", "$comment", "$defs", "definitions",
+        "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "dependentSchemas", "dependencies",
+        "prefixItems", "items", "additionalItems", "contains", "properties", "patternProperties",
+        "additionalProperties", "propertyNames", "unevaluatedItems", "unevaluatedProperties",
+        "type", "enum", "const", "multipleOf", "maximum", "exclusiveMaximum", "minimum", "exclusiveMinimum",
+        "maxLength", "minLength", "pattern", "maxItems", "minItems", "uniqueItems", "maxContains",
+        "minContains", "maxProperties", "minProperties", "required", "dependentRequired",
+        "title", "description", "default", "deprecated", "readOnly", "writeOnly", "examples",
+        "format", "contentEncoding", "contentMediaType", "contentSchema",
+    }
+)  # fmt: skip
 
 
 def tool_text(tool: Tool) -> str:
@@ -25,18 +57,22 @@ def tool_text(tool: Tool) -> str:
 
 
 def schema_text(schema: Any) -> list[str]:
-    """Every string in a JSON Schema except its structural keywords. Under
-    `default`, `enum` and the like, any key is data; under `properties`, keys
-    are parameter names, which a model reads too."""
+    """Every string and key in a JSON Schema, except keyword names and the
+    usual values of `type`, `format` and `$schema`. Under `default`, `enum`
+    and the like, any key is data; under `properties`, keys are parameter
+    names, which a model reads too."""
     if isinstance(schema, list):
         return [text for item in cast(list[Any], schema) for text in schema_text(item)]
     if not isinstance(schema, dict):
         return [schema] if isinstance(schema, str) else []
     found: list[str] = []
     for key, value in cast(dict[str, Any], schema).items():
-        if key in SCHEMA_STRUCTURE_KEYWORDS:
-            continue
-        if key in SCHEMA_DATA_KEYWORDS:
+        if key not in SCHEMA_KEYWORDS:
+            found.append(key)
+        if key in KNOWN_VALUES:
+            found.extend(text for text in string_leaves(value) if text not in KNOWN_VALUES[key])
+            found.extend(json_keys(value))
+        elif key in SCHEMA_DATA_KEYWORDS:
             found.extend([*string_leaves(value), *json_keys(value)])
         elif key in SCHEMA_NAME_KEYWORDS and isinstance(value, dict):
             found.extend(cast(dict[str, Any], value))
@@ -48,8 +84,9 @@ def schema_text(schema: Any) -> list[str]:
 
 class ToolScreen:
     """A route's verdicts on its tools. A definition is scanned once per
-    version of its text; a flag is audited when first seen. A detector failure
-    hides the tool without caching it."""
+    version of its text; a flag, and a change to a screened definition, are
+    audited when first seen. A detector failure hides the tool without
+    caching it."""
 
     def __init__(self, route: str, detector: Detector, audit: Callable[..., None]) -> None:
         self.route = route
@@ -79,6 +116,10 @@ class ToolScreen:
         if cached is not None and cached[0] == digest:
             return cached[1]
         line = {"route": self.route, "tool": name, "definition_sha256": digest}
+        if cached is not None:
+            # A tool that changes after it was screened is the "rug pull"
+            # pattern: worth a line even when the new version passes too.
+            self.audit("tool_changed", **line, previous_sha256=cached[0])
         try:
             verdict = await self.detector.scan(text)
         except Exception as exc:  # fail closed: hidden for now, not cached, so the next listing retries

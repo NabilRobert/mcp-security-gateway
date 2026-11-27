@@ -1,0 +1,25 @@
+# gitleaks settings: the default rules, plus two narrow exceptions. Each one
+# allows a single value shape in named files only; every other rule and file
+# is scanned as usual.
+[extend]
+useDefault = true
+
+[[allowlists]]
+# The gullible-agent runs record the config they used. `key_sha256` is the
+# SHA-256 of a one-time key made for that run and never stored, the only
+# form the gateway keeps a key in. The generic-api-key rule reads the hash as
+# a key.
+description = "Key hashes in recorded eval configs"
+paths = [
+  '''eval/results/gullible/gateway-off/gateway\.yaml''',
+  '''eval/results/gullible/gateway-on/gateway\.yaml''',
+  '''eval/results/gullible/policy-only/gateway\.yaml''',
+]
+regexes = ['''^[0-9a-f]{64}$''']
+
+[[allowlists]]
+# The test suite's two caller keys, which only ever open the in-process
+# gateway the tests start.
+description = "Fixed test keys"
+paths = ['''tests/conftest\.py''']
+regexes = ['''^test-key-(alpha|bravo)-0123456789abcdefghijklmnop$''']

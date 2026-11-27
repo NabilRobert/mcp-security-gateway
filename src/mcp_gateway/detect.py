@@ -1,7 +1,7 @@
 """Prompt-injection detection on tool outputs (ADR-005).
 
-Two layers behind one interface: pattern rules, then a small local
-classifier (ProtectAI's deberta-v3-base-prompt-injection-v2, run with ONNX
+Two layers behind one interface: pattern rules (`rules_layer.py`), then a
+small local classifier (ProtectAI's deberta-v3-base-prompt-injection-v2, run with ONNX
 on CPU). An output is suspicious if any layer flags it. Both layers read
 the same text: a JSON output's string values only, because Spike 4 showed
 the classifier reacts to the JSON envelope itself (54% false positives on
@@ -16,23 +16,22 @@ import json
 import re
 import threading
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import anyio
-import yaml
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
 
-RULES_FILE = Path(__file__).parent / "rules" / "injection.yaml"
 # Bumped when the scanning code changes, so results from an older
 # implementation can't pass as this one's. s5 also scans JSON keys that read
-# like prose, on their own (s3 and s4 were earlier attempts; see ADR-005).
-SCAN_IMPLEMENTATION = "s5"
+# like prose, on their own (s3 and s4 were earlier attempts; see ADR-005). s6
+# scans every value of a repeated JSON key, and the rules read text with
+# invisible characters dropped and look-alike letters folded.
+SCAN_IMPLEMENTATION = "s6"
 # Four words: "ignore all previous instructions". Field names are shorter.
 MIN_WORDS_IN_PROSE_KEY = 4
 WORD = re.compile(r"[^\W_]+")
@@ -90,12 +89,22 @@ def _collect_keys(value: Any, keys: dict[str, None]) -> None:
             _collect_keys(item, keys)
 
 
+def _keep_repeated_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object with every value of a repeated key kept, as a list.
+    `json.loads` keeps only the last value, while the agent's parser may keep
+    the first: scanning one would pass the other unread."""
+    found: dict[str, Any] = {}
+    for key, value in pairs:
+        found[key] = [found[key], value] if key in found else value
+    return found
+
+
 def _parse_json(text: str) -> Any:
     """The JSON object or array in `text`, or None if it isn't one."""
     if text.lstrip()[:1] not in ("{", "["):
         return None
     try:
-        return json.loads(text)
+        return json.loads(text, object_pairs_hook=_keep_repeated_keys)
     except ValueError:
         return None
 
@@ -135,35 +144,6 @@ async def scan_output(detector: Detector, text: str, keys: str) -> DetectorVerdi
         return verdict
     key_verdict = await detector.scan(keys)
     return replace(key_verdict, ms=verdict.ms + key_verdict.ms) if key_verdict.suspicious else verdict
-
-
-def _normalise(text: str) -> str:
-    # NFKC folds look-alike characters (full-width letters and the like);
-    # collapsing whitespace stops a line break from splitting a phrase.
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text))
-
-
-class RulesDetector:
-    def __init__(self, path: Path = RULES_FILE) -> None:
-        raw = path.read_bytes()
-        spec = yaml.safe_load(raw)
-        self.rules = [(r["id"], re.compile(r["pattern"], re.IGNORECASE)) for r in spec["rules"]]
-        self.version = f"rules-{hashlib.sha256(raw).hexdigest()[:12]}-{SCAN_IMPLEMENTATION}"
-
-    def match(self, text: str) -> tuple[str, ...]:
-        normalised = _normalise(text)
-        return tuple(rule_id for rule_id, pattern in self.rules if pattern.search(normalised))
-
-    async def scan(self, text: str) -> DetectorVerdict:
-        start = time.perf_counter()
-        matched = self.match(text_for_scanning(text))
-        return DetectorVerdict(
-            suspicious=bool(matched),
-            score=1.0 if matched else 0.0,
-            layer="rules",
-            matched=matched,
-            ms=(time.perf_counter() - start) * 1000,
-        )
 
 
 def load_tokenizer(path: Path) -> "Tokenizer":

@@ -11,7 +11,8 @@ nest under the gateway's.
 Spans carry outcomes, never content: no tool arguments, outputs, denial
 reasons or exception messages, any of which can quote what the agent sent
 (Project 6 conventions, rule 5). Decisions, detector verdicts, rule IDs,
-counts and timings are fine.
+counts and timings are fine. The SDK's own spans can carry an upstream's
+error message, so the exporter gets every span through `FreeTextFilter`.
 
 Follows MCP-backbone's `app/tracing.py` (NabilRobert/MCP-backbone at
 5f38bd2): the same environment variables, export timeout and capped
@@ -25,12 +26,13 @@ import threading
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 
-from opentelemetry import trace
+from opentelemetry import context, trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace import Event, ReadableSpan, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace import Span as SdkSpan
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.trace import Span, SpanKind, StatusCode
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from opentelemetry.util.types import Attributes
 
 from mcp_gateway import __version__
@@ -46,6 +48,58 @@ DEFAULT_EXPORT_TIMEOUT_S = 2.0
 SHUTDOWN_TIMEOUT_S = 2.0
 
 
+# What an exception event may keep: its type, not its message or stack.
+EXCEPTION_FREE_TEXT = frozenset({"exception.message", "exception.stacktrace"})
+
+
+def without_free_text(span: ReadableSpan) -> ReadableSpan:
+    """A copy of `span` without a status description or exception details.
+    The gateway's own stages set neither, but the SDK's `tools/call` span
+    copies an upstream's error message into its status, and an error can
+    quote what the agent sent."""
+    events = [
+        Event(
+            event.name,
+            {key: value for key, value in (event.attributes or {}).items() if key not in EXCEPTION_FREE_TEXT},
+            event.timestamp,
+        )
+        for event in span.events
+    ]
+    return ReadableSpan(
+        name=span.name,
+        context=span.context,
+        parent=span.parent,
+        resource=span.resource,
+        attributes=span.attributes,
+        events=events,
+        links=span.links,
+        kind=span.kind,
+        status=Status(span.status.status_code),
+        start_time=span.start_time,
+        end_time=span.end_time,
+        instrumentation_scope=span.instrumentation_scope,
+    )
+
+
+class FreeTextFilter(SpanProcessor):
+    """Passes finished spans to `inner` without their free text."""
+
+    def __init__(self, inner: SpanProcessor) -> None:
+        self._inner = inner
+
+    def on_start(self, span: SdkSpan, parent_context: context.Context | None = None) -> None:
+        self._inner.on_start(span, parent_context)
+
+    def on_end(self, span: ReadableSpan) -> None:
+        self._inner.on_end(without_free_text(span))
+
+    def shutdown(self) -> None:
+        self._inner.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        return self._inner.force_flush(timeout_millis)
+
+
 def build_span_processor(env: Mapping[str, str] = os.environ) -> SpanProcessor | None:
     """The background exporter, or None when no endpoint is set. Reads the
     standard variables the way the SDK does: the traces-only endpoint as
@@ -57,9 +111,8 @@ def build_span_processor(env: Mapping[str, str] = os.environ) -> SpanProcessor |
     if not endpoint:
         return None
     timeout = env.get("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT") or env.get("OTEL_EXPORTER_OTLP_TIMEOUT")
-    return BatchSpanProcessor(
-        OTLPSpanExporter(endpoint=endpoint, timeout=float(timeout) if timeout else DEFAULT_EXPORT_TIMEOUT_S)
-    )
+    exporter = OTLPSpanExporter(endpoint=endpoint, timeout=float(timeout) if timeout else DEFAULT_EXPORT_TIMEOUT_S)
+    return FreeTextFilter(BatchSpanProcessor(exporter))
 
 
 def build_provider(env: Mapping[str, str] = os.environ) -> TracerProvider | None:

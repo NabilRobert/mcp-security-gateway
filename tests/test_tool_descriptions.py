@@ -18,8 +18,9 @@ from test_detection import INJECTION
 
 from mcp_gateway.audit import AuditLog
 from mcp_gateway.config import GatewayConfig
-from mcp_gateway.detect import DetectorVerdict, RulesDetector
+from mcp_gateway.detect import DetectorVerdict
 from mcp_gateway.proxy import Route, tool_text
+from mcp_gateway.rules_layer import RulesDetector
 from mcp_gateway.upstreams import list_all_tools
 
 pytestmark = pytest.mark.anyio
@@ -217,14 +218,42 @@ async def test_one_name_listed_twice_gets_one_verdict_on_both(tmp_path: Path) ->
     assert await r._screen_tools(twins) == {"twin"}  # pyright: ignore[reportPrivateUsage]
 
 
-def test_schema_keywords_are_not_read_as_text() -> None:
+def test_the_usual_keyword_values_are_not_read_as_text() -> None:
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "required": ["limit"],
-        "properties": {"limit": {"type": "integer", "format": "int32", "$ref": "#/$defs/n"}},
+        "properties": {"limit": {"type": ["integer", "null"], "format": "int32"}},
     }
     assert tool_text(Tool(name="lookup", input_schema=schema)) == "lookup\nlimit"
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"properties": {"q": {"type": "string", "format": INJECTION}}},
+        {"properties": {"q": {"type": INJECTION}}},
+        {"$schema": INJECTION},
+        {"properties": {"q": {"$ref": f"#/$defs/{INJECTION}"}}},
+        {"required": [INJECTION]},
+        {"x-note": INJECTION},
+        {"x-note": {INJECTION: True}},
+        {INJECTION: 1},
+        {"properties": {"q": {"x-hint": {"type": INJECTION}}}},
+    ],
+    ids=[
+        "format_value",
+        "type_value",
+        "schema_value",
+        "ref",
+        "required",
+        "custom_keyword_value",
+        "key_under_custom_keyword",
+        "custom_key_name",
+        "keyword_inside_custom_keyword",
+    ],
+)
+def test_text_hidden_under_schema_keywords_or_custom_keys_is_screened(schema: dict[str, Any]) -> None:
+    assert INJECTION in tool_text(Tool(name="t", input_schema={"type": "object", **schema}))
 
 
 async def test_scanning_off_passes_definitions_through(tmp_path: Path) -> None:
@@ -289,6 +318,19 @@ async def test_a_definition_is_scanned_once_until_it_changes(tmp_path: Path) -> 
     changed = honest.model_copy(update={"description": f"Look up a customer. {INJECTION}"})
     assert await r._screen_tools([changed]) == {"lookup"}  # pyright: ignore[reportPrivateUsage]
     assert len(detector.scanned) == 2
+
+
+async def test_a_changed_definition_is_audited_even_when_it_passes(tmp_path: Path) -> None:
+    r = route(tmp_path, RulesDetector())
+    first = Tool(name="lookup", description="Look up a customer.", input_schema={})
+    await r._screen_tools([first])  # pyright: ignore[reportPrivateUsage]
+    await r._screen_tools([first])  # pyright: ignore[reportPrivateUsage]
+    second = first.model_copy(update={"description": "Look up a customer by id."})
+    await r._screen_tools([second])  # pyright: ignore[reportPrivateUsage]
+    changes = [line for line in audit(r.config) if line["kind"] == "tool_changed"]
+    assert [(line["tool"], line["previous_sha256"] != line["definition_sha256"]) for line in changes] == [
+        ("lookup", True)
+    ]
 
 
 async def test_the_scan_reads_title_description_and_schema_descriptions(tmp_path: Path) -> None:

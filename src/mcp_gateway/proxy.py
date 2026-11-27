@@ -14,7 +14,6 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 from mcp.server import Server, ServerRequestContext
-from mcp.server.streamable_http import MCP_SESSION_ID_HEADER
 from mcp.shared.exceptions import MCPError
 from mcp.types import (
     CallToolRequestParams,
@@ -22,7 +21,6 @@ from mcp.types import (
     ListToolsResult,
     PaginatedRequestParams,
     RequestParamsMeta,
-    TextContent,
     Tool,
 )
 from mcp_types.jsonrpc import INTERNAL_ERROR, INVALID_REQUEST
@@ -40,6 +38,7 @@ from mcp_gateway.outputs import (
     annotated_result,
     blocked_span_error,
     detect_attributes,
+    error_result,
     inspect_output,
     scan_text,
     screen_error,
@@ -48,21 +47,15 @@ from mcp_gateway.policy import allowed_tools, check_call
 from mcp_gateway.ratelimit import CallLimiter
 from mcp_gateway.tool_screen import ToolScreen, tool_text
 from mcp_gateway.tracing import mark, stage
-from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams, list_all_tools
+from mcp_gateway.upstreams import IDLE_TIMEOUT_S, Upstreams, list_all_tools, session_id_of
+
+# How many session bindings are kept before a new one triggers a sweep of
+# those idle past the SDK's timeout. Each costs a few hundred bytes, so this
+# many is a few MB, and below it no request pays for the scan.
+MAX_TRACKED_SESSIONS = 10_000
 
 # Public names other modules and the tests take from here.
 __all__ = ["REDACTED", "UPSTREAM_ERROR", "Route", "annotated_result", "redact", "scan_text", "tool_text"]
-
-
-def session_id_of(ctx: ServerRequestContext[Any, Any]) -> str | None:
-    request = ctx.request
-    headers = getattr(request, "headers", None)
-    value = headers.get(MCP_SESSION_ID_HEADER) if headers is not None else None
-    return value if isinstance(value, str) and value else None
-
-
-def _refused(message: str) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=message)], is_error=True)
 
 
 class Route:
@@ -111,7 +104,7 @@ class Route:
 
     def bind_session(self, session: str, caller: str) -> None:
         now = time.monotonic()
-        if session not in self._session_callers and len(self._session_callers) > 10_000:
+        if session not in self._session_callers and len(self._session_callers) > MAX_TRACKED_SESSIONS:
             self._forget_idle(now)
         self._session_callers[session] = (caller, now)
 
@@ -136,10 +129,18 @@ class Route:
         self, ctx: ServerRequestContext[Any, Any], params: PaginatedRequestParams | None
     ) -> ListToolsResult:
         caller = self._caller(ctx)
+        fields = {"caller": caller, "route": self.name}
+        # Each listing reaches the upstream (and may start its process), so
+        # listings are limited too, on an allowance of their own.
+        limit = await self.limiter.take(caller, "list")
+        if limit is not None:
+            self._try_append("list", decision="rate_limited", limit=limit, **fields)
+            raise MCPError(INVALID_REQUEST, f"Refused by the gateway: this key's listing limit ({limit}) is used up.")
         allowed = allowed_tools(self.config.policy_for(caller), self.name)
-        upstream = await self.upstreams.for_session(session_id_of(ctx))
-        async with self._audited_failures("list", {"caller": caller, "route": self.name}), self._screening_errors():
-            result = await upstream.session.list_tools(params=params)
+        async with self._audited_failures("list", fields):
+            upstream = await self.upstreams.for_session(session_id_of(ctx), caller)
+            async with self._screening_errors():
+                result = await upstream.session.list_tools(params=params)
         tools = [t for t in result.tools if t.name in allowed]
         with stage("screen_tools") as span:
             flagged = await self._screen_tools(tools)
@@ -173,7 +174,7 @@ class Route:
             return None
         call.decided("rate_limited")
         self._try_append("call", decision="rate_limited", limit=limit, **call.record)
-        return _refused(f"Refused by the gateway: this key's call limit ({limit}) is used up.")
+        return error_result(f"Refused by the gateway: this key's call limit ({limit}) is used up.")
 
     async def _policy_refusal(self, ctx: ServerRequestContext[Any, Any], call: Call) -> CallToolResult | None:
         with stage("policy") as span:
@@ -182,7 +183,7 @@ class Route:
             return None
         call.decided("denied")
         self._try_append("call", decision="denied", reason=reason, **call.record)
-        return _refused(f"Denied by gateway policy: {reason}.")
+        return error_result(f"Denied by gateway policy: {reason}.")
 
     async def _denial_reason(self, ctx: ServerRequestContext[Any, Any], call: Call, span: trace.Span) -> str | None:
         verdict = check_call(self.config.policy_for(call.caller), self.name, call.tool, call.arguments)
@@ -190,7 +191,7 @@ class Route:
             mark(span, "denied")
             return verdict.reason
         async with self._audited_failures("call", call.record):
-            is_flagged = await self._tool_is_flagged(ctx, call.tool)
+            is_flagged = await self._tool_is_flagged(ctx, call.tool, call.caller)
         if is_flagged:
             mark(span, "tool_hidden")
             return f"tool {call.tool!r} hidden: its definition failed screening"
@@ -229,7 +230,7 @@ class Route:
         async with self._audited_failures("result", call.ids, call.span):
             # Inside this span, so the SDK client parents the upstream request on it.
             with stage("forward"):
-                upstream = await self.upstreams.for_session(session_id_of(ctx))
+                upstream = await self.upstreams.for_session(session_id_of(ctx), call.caller)
                 meta = cast(RequestParamsMeta, call.forwarded_meta)
                 async with self._screening_errors():
                     return await upstream.session.call_tool(call.tool, call.arguments, meta=meta)
@@ -268,7 +269,7 @@ class Route:
             scan_cap = self.config.detector.scan_cap_chars
             raise await screen_error(exc, self.name, self.detector, scan_cap) from exc
 
-    async def _tool_is_flagged(self, ctx: ServerRequestContext[Any, Any], name: str) -> bool:
+    async def _tool_is_flagged(self, ctx: ServerRequestContext[Any, Any], name: str, caller: str) -> bool:
         """For a call: refuse a flagged tool even if the agent never listed
         tools. Unscreened tools are screened on the spot, and a tool the
         upstream no longer lists can't be, so it's refused too."""
@@ -277,7 +278,7 @@ class Route:
         known = self._tool_screen.known_verdict(name)
         if known is not None:
             return known
-        upstream = await self.upstreams.for_session(session_id_of(ctx))
+        upstream = await self.upstreams.for_session(session_id_of(ctx), caller)
         async with self._screening_errors():
             listed = await list_all_tools(upstream)
         definitions = [t for t in listed if t.name == name]

@@ -79,7 +79,7 @@ sequenceDiagram
    - `outputs.py: unscanned_reason` blocks what can't be read (images,
      audio, text past the scan cap), unless the policy allows it.
    - `detect.py: LayeredDetector.scan` runs the layers in order and stops
-     at the first flag. `detect.py: RulesDetector.scan` matches the patterns
+     at the first flag. `rules_layer.py: RulesDetector.scan` matches the patterns
      in `rules/injection.yaml`. `detect.py: ModelDetector.scan` runs
      ProtectAI's classifier in 512-token windows, under a 2 s timeout. An
      output needing more than `max_windows` windows is flagged unread.
@@ -132,10 +132,12 @@ flowchart LR
 - `Route._list_tools` filters the upstream's tools by policy, then
   `tool_screen.py: ToolScreen.flagged` scans everything a model can read of
   each one (`tool_screen.py: tool_text`) with the same detector: its name, titles,
-  description and the text in its schemas.
+  description, and every string and custom key in its schemas (only the
+  usual values of `type`, `format` and `$schema` stay out).
 - A flagged tool is hidden and gets one `tool_flagged` audit line. Verdicts
   are cached by the definition's hash, so a changed description is scanned
-  again.
+  again, and the change gets a `tool_changed` line (a tool that changes
+  after it was screened is the "rug pull" pattern).
 - `Route._tool_is_flagged` refuses calls to a flagged tool, even if the
   agent never listed tools. It screens against every page of the upstream's
   tools (`upstreams.py: list_all_tools`), and refuses a tool it can't find.
@@ -171,7 +173,7 @@ flowchart LR
 | Argument rule | A path prefix or a full-match pattern an argument must meet | `config.py: ArgRule` |
 | Prompt injection | Text in a tool's output (or description) written to make the model do something else | `THREAT_MODEL.md` |
 | Detector | What scans text for injections; its `version` is recorded on every result line | `detect.py: Detector` |
-| Rules layer | Hand-written patterns: fast, precise, narrow | `detect.py: RulesDetector`, `rules/injection.yaml` |
+| Rules layer | Hand-written patterns: fast, precise, narrow | `rules_layer.py: RulesDetector`, `rules/injection.yaml` |
 | Model layer | ProtectAI's DeBERTa classifier, run locally with onnxruntime | `detect.py: ModelDetector` |
 | ONNX, onnxruntime | A file format for models, and the library that runs them on the CPU without PyTorch | `detect.py: ModelDetector` |
 | Threshold | The model's score at or above which text is flagged (0.999 in the example config) | `config.py: ModelSettings` |
@@ -183,7 +185,9 @@ flowchart LR
 | Hash chain | Each audit line carries the hash of the one before, so edits show; `mcp-gateway verify-log` checks it | `audit.py: verify_log` |
 | `_meta` | Extra data on an MCP request (trace context, an app's tokens), forwarded except for the agent's own connection keys | `calls.py: end_to_end_meta` |
 | Caller stamp | The authenticated caller, added to `_meta` so an upstream can trust who called | `calls.py: CALLER_META_KEY` |
-| Rate limit | A cap on a key's calls per moving window, across all routes. Counts are in memory, so a restart resets them | `ratelimit.py: CallLimiter` |
+| Rate limit | A cap on a key's calls per moving window, across all routes. Tool listings have their own count of the same size. Counts are in memory, so a restart resets them | `ratelimit.py: CallLimiter` |
+| Session caps | How many per-session upstream processes run at once, per key and in total | `config.py: UpstreamSessionLimits`, `upstreams.py: SessionBudget` |
+| Read timeout, byte cap | How long an upstream's answer may take (`read_timeout_s`), and how large an HTTP answer may be (`max_response_bytes`) | `config.py: StdioUpstream`, `HttpUpstream`; `upstreams.py: CappedTransport` |
 | Stdio, HTTP upstream | Stdio: the gateway starts the server as a child process. HTTP: it connects to one already running | `config.py: StdioUpstream`, `HttpUpstream` |
 | Span, trace | One timed step, and the tree of steps for one request (OpenTelemetry) | `tracing.py` |
 | Dev and test split | Dev tunes the detector; test, kept apart, is scored once per detector version | `eval/split.py`, `eval/score.py` |
@@ -195,7 +199,9 @@ flowchart LR
 
 - **Run the checks** (the same ones CI runs): `uv sync --locked --python 3.12`,
   then `uv run ruff check .`, `uv run ruff format --check .`,
-  `uv run pyright` and `uv run pytest -q`.
+  `uv run pyright` and `uv run pytest -q`. CI also scans every commit for
+  secrets with `gitleaks git --redact .`; its few exceptions, each explained,
+  are in `.gitleaks.toml`.
 - **Add an upstream server:** add it under `upstreams:` in your config
   (see `examples/gateway.yaml`), then allow its tools in a policy. The
   gateway checks at start-up that every allowed tool exists.
@@ -204,6 +210,12 @@ flowchart LR
 - **Change what a caller may do:** edit its policy's `routes:`, the tools
   and their argument rules. Policies are YAML (ADR-004).
 - **Limit a key's calls:** set its `rate_limit`, such as `"120/minute"`.
+  Its tool listings get a separate allowance of the same size.
+- **Change how many per-session upstreams run:** `upstream_sessions`
+  (`max_total`, default 32; `max_per_caller`, default 8) in the config.
+- **Change how long an upstream may take, or how large its answer may
+  be:** `read_timeout_s` on the upstream (default 60), and
+  `max_response_bytes` on an HTTP upstream (default 8 MiB).
 - **Change what happens to a suspicious output:** the policy's
   `on_suspicious` (`block`, `annotate` or `log`).
 - **Add an injection pattern:** edit `src/mcp_gateway/rules/injection.yaml`.
